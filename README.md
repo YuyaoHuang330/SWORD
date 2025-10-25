@@ -6,7 +6,7 @@
 
 `ICSDEntry`:
 
-The ICSD CIF wrapper: `ICSDEntry` use `Pymatgen CifParser` to read original CIF file and retrieve key crystallographic information via `entry.attribute` notation
+The ICSD CIF wrapper: `ICSDEntry` use `Pymatgen CifParser` to read original CIF file and retrieve key crystallographic information via `entry.attribute` notation.
 The instance can be constructed by:
 
 **From ICSD CollectionCode:**
@@ -35,13 +35,13 @@ A valid `CollectionCode` is required, and the target entry must exist within the
         self.occ                          #list of all sites' occupancies
         self.mults                        #list of all sites' multiplicity 
         self.wyckoffs                     #list of all sites' wyckoff letters
-        self.sym_ops                      #list of all symmetry operations recorder in CIF
+        self.sym_ops                      #list of all symmetry operations recorded in CIF
     
 ```
 
 # 2. Pre-screening of ICSD database:
 
-In ICSD_prescreen.py or ICSD_prescree_filter.ipynb file :
+In ICSD_prescreen.py or ICSD_prescreen_filter.ipynb file :
 
 Run the file (it will take about 7 mins):
 
@@ -74,11 +74,11 @@ After pre-screening process, the ICSD entries can be labelled now:
 
 `site_tolerance`: 
 
-Determine if two sites are at the same position, in which case they will be combined to a single disordered site, defalut as 1e-4. For example: If the distance between two sites ≤ site_tolerance, the sites are regarded as in the same position.
+Determine if two sites are at the same position, in which case they will be merged to a single disordered site, defalut as `1e-4`. For example: If the distance between two sites ≤ site_tolerance, the sites are regarded as in the same position.
 
 `vac_tolerance:` 
 
-Determine if vacancy component exist for each single/multi-occupancy site, in which case the ‘VAC’ will present in the final disorder label, defalut as 1e-2. For example: f 1.0 - (sum of occupancy) ≥ vac_tolerance, the site are regarded as containing vacancy. Otherwise, the vacancy component will be ignored (e.g occ_sum = 1.0-0.995 = 0.05 ≤ 0.01, the vacancy component will be ignored and not recorded in disorder label). 
+Determine if vacancy exists for each single/multi-occupancy site, in which case the ‘VAC’ will present in the final disorder label, defalut as `1e-2`. For example, if 1.0 - (sum of occupancy) ≥ vac_tolerance, the site are regarded as containing vacancy. Otherwise, the vacancy component will be ignored (e.g occ_sum = 1.0-0.995 = 0.05 ≤ 0.01, the vacancy component will be ignored and not recorded in disorder label). 
 
 `occ_tolerance`:
 
