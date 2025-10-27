@@ -12,111 +12,22 @@ import numpy as np
 import itertools
 from itertools import combinations_with_replacement
 from collections import Counter, defaultdict
+from ICSD_precreen import ICSDEntry
 
 ICSD = pd.read_csv('/home/users/jhwang/database/ICSD/ICSD2024_summary_2024.2_v5.3.0.csv')
-ICSD_valid = pd.read_pickle('ICSD_screened.pkl')
+ICSD_valid = pd.read_pickle('icsd_screened.pkl')
 wyckoff_sets = pd.read_json('wyckoff_sets.json')
 radius_df = pd.read_csv('all_radii.csv')
 
 
-def clean_num(token: str) -> float:
+def clean_num(token: str):
     base = re.sub(r"\(.*\)", "", token)
     try:
         return float(base)
     except Exception:
         return None
-
-class ICSDEntry:
-    """
-    The ICSD CIF wrapper:
-    The instance can be constructed from_cif, or from_collection_code in ICSD_df(DataFrame)
-    meta: optional dict (e.g. {'CollectionCode':5004,'StructuredFormula':'Na2O'})
-    """
-    def __init__(self, cif_text,collection_code = None, meta=None):
-        self.meta = meta
-        if collection_code is not None:
-            self.CollectionCode = collection_code
-        else:
-            self.CollectionCode = None
-
-        cif_str = StringIO(cif_text)
-        parser = CifParser(cif_str)
-        cif_dict = parser.as_dict()
-        block_name = list(cif_dict.keys())[0]
-        block = cif_dict[block_name]
-        try:
-            space_group_number = int(re.sub(r"\(.*\)", "", block["_space_group_IT_number"]))
-        except Exception:
-            space_group_number = block.get("_space_group_IT_number", None)
-
-        a = block["_cell_length_a"]
-        b = block["_cell_length_b"]
-        c = block["_cell_length_c"]
-
-        xs = [clean_num(x) for x in block["_atom_site_fract_x"]]
-        ys = [clean_num(x) for x in block["_atom_site_fract_y"]]
-        zs = [clean_num(x) for x in block["_atom_site_fract_z"]]
-        if any(v is None for v in xs + ys + zs):
-            warnings.warn(f"CollectionCode {self.CollectionCode}: coordinate contains non-standard value(s).")
-
-        labels = block["_atom_site_label"]
-        type_symbols = block["_atom_site_type_symbol"]
-        occupancies = [clean_num(x) for x in block["_atom_site_occupancy"]]
-        if any(v is None for v in occupancies):
-            warnings.warn(f"CollectionCode {self.CollectionCode}: site_occupancy contains non-standard value(s).")
-
-        mults = [int(m) for m in block["_atom_site_symmetry_multiplicity"]]
-        wycks = block["_atom_site_Wyckoff_symbol"]
-
-        sym_ops = block.get("_space_group_symop_operation_xyz", [])
-        sym_ops = [SymmOp.from_xyz_str(op_str) for op_str in sym_ops]
-
-        nsites = len(labels)
-        points = []
-        for i in range(nsites):
-            coord = (xs[i], ys[i], zs[i])
-            points.append(coord)
-
-        records = []
-        for i, lab in enumerate(labels):
-            coord = [xs[i], ys[i], zs[i]]
-            rec = {
-                'label'         : lab,
-                'type_symbol'   : type_symbols[i],
-                'multiplicity'  : int(mults[i]),
-                'wyckoff_symbol': wycks[i],
-                'coordinate'    : coord,
-                'occupancy'     : occupancies[i], 
-            }
-            records.append(rec)
-            
-        self.cif_dict = cif_dict
-        self.cif_str = cif_text
-        self.spg_num = space_group_number
-        self.lattice = (a,b,c)
-        self.xs = xs; self.ys = ys; self.zs = zs
-        self.labels = labels
-        self.type_symbols = type_symbols
-        self.occ = occupancies 
-        self.mults = mults
-        self.wyckoffs = wycks
-        self.sym_ops = sym_ops
-        self.points = points
-        self.records = records
-
-    @classmethod
-    def from_cif(cls, cif_text: str = None, meta=None):
-        return cls(cif_text, meta=meta, collection_code = None)
     
-    @classmethod
-    def from_collection_code(cls, collection_code, ICSD_df: pd.DataFrame = None, meta=None):
-        row = ICSD_df[ICSD_df['CollectionCode'] == collection_code].iloc[0]
-        cif_text = row['cif']
-        if meta == 'all':
-            meta = row.to_dict()
-        return cls(cif_text, meta=meta, collection_code = collection_code)
-    
-def periodic_dist(a: np.ndarray, b: np.ndarray) -> float:
+def periodic_dist(a: np.ndarray, b: np.ndarray):
     diff = a - b
     diff_pbc = diff - np.round(diff)
     return np.linalg.norm(diff_pbc)
@@ -158,6 +69,9 @@ def get_equiv_positions(point, sym_ops, frac_tolerance=1e-4):
     return tuple(sorted(final_coords))
 
 def orb_keys_max_diff(key1, key2, prune_tol=1e-2, frac_tolerance = 1e-4):
+    key1 = sorted(key1)
+    key2 = sorted(key2)
+
     ndigits = max(0, -int(math.floor(math.log10(frac_tolerance))))
     if len(key1) != len(key2):
         return math.inf
@@ -190,11 +104,11 @@ def compute_disorder(entry, disordered_list, total_sites = 0, verbose = False):
         non_vac_type_symbols = [label2type[lab] for lab in non_vac_labels if label2occ[lab]>0]
         occs = [label2occ[lab] for lab in non_vac_labels if label2occ[lab]>0]
 
-        merged_occ = defaultdict(float) #merge the occ, because some situation will include same valence element in disorder_list
+        merged_occ = defaultdict(float) # merge same type_symbols occupancies
         for s, o in zip(non_vac_type_symbols, occs):
             merged_occ[s] += o
 
-        occs = list(merged_occ.values()) #should check if merged_occ > 1.0,可能需要增加一个空值occ溢出的参数
+        occs = list(merged_occ.values()) # TODO: should check if merged_occ > 1.0
 
         if any("VAC" in lab for lab in sites):
             occ_vac = 1.0 - sum(occs)
@@ -214,7 +128,7 @@ def compute_disorder(entry, disordered_list, total_sites = 0, verbose = False):
 
         disordered_sites += multiplicity
         total_mixing += site_mixing * multiplicity
-        if verbose == True:
+        if verbose:
             print(f"the site is occupied with: {dict(merged_occ)}\n"
                     f"site mixing factor: {site_mixing}\n"
                     f"number of sites: {multiplicity}")
@@ -229,31 +143,19 @@ def compute_disorder(entry, disordered_list, total_sites = 0, verbose = False):
             delta = 1
         else:
             delta = (XA - XZ) / abs(XA - XZ)
-        if verbose == True:
+        if verbose:
             print(kmin, kmax, XA, XZ, delta)
     else:
         delta = 0
-        if verbose == True:
+        if verbose:
             print(delta)
 
-    if verbose == True:
+    if verbose:
             print(f"disordered_sites: {disordered_sites}, total_sites: {total_sites}, total_mixing: {total_mixing}")
     fraction_of_disordered_sites = round(disordered_sites / total_sites, 4)
     degree_of_mixing = round(delta* total_mixing / disordered_sites, 4)
 
     return fraction_of_disordered_sites, degree_of_mixing
-
-#------mapping wyckoff_sets into a nested dictionary with spacegroup number and coset number indexed each Transformed WP-------------
-mapping_by_sg = {}
-for sg in wyckoff_sets.index:
-    no_list = wyckoff_sets.at[sg, "No."]                     # e.g. [1,2,3,4]
-    wp_str_list = wyckoff_sets.at[sg, "Transformed WP"]      # e.g. ['a b c d e f g h i j', ...]
-    inner_map = {}
-    for no, wp_str in zip(no_list, wp_str_list):
-        letters = wp_str.split()                             
-        letter_map = {idx: ch for idx, ch in enumerate(letters)}
-        inner_map[no] = letter_map  
-    mapping_by_sg[sg] = inner_map
 
 def get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, space_group_number):
     wyckoff_set_std = ''
@@ -677,136 +579,147 @@ def disorder_label(entry, site_tolerance: float = 0.0001, vac_tolerance: float =
         "intersect_orb_error": intersect_orb_error
     }
 
-#codes_to_select = [33404, 38870, 83283, 148749]
-#sample = ICSD[ICSD['CollectionCode'].isin(codes_to_select)]
-#database = sample.copy()
-database = ICSD_valid.copy()
-new_cols = [
-    "is_disorder",
-    "is_sub_disorder",
-    "is_vac_disorder",
-    "is_positional_disorder",
-    "fraction_of_disordered_sites",
-    "degree_of_mixing",
-    "disorder_label",
-    "wyckoff_set_std",
-    "disordered_valence_list",
-]
 
-out_lists = {c: [] for c in new_cols}
-wyck_float_warn = []
-main_errors = []
-intersect_orb_errors = []
+if __name__ == "__main__":
+    #------mapping wyckoff_sets into a nested dictionary with spacegroup number and coset number indexed each Transformed WP-------------
+    mapping_by_sg = {}
+    for sg in wyckoff_sets.index:
+        no_list = wyckoff_sets.at[sg, "No."]                     # e.g. [1,2,3,4]
+        wp_str_list = wyckoff_sets.at[sg, "Transformed WP"]      # e.g. ['a b c d e f g h i j', ...]
+        inner_map = {}
+        for no, wp_str in zip(no_list, wp_str_list):
+            letters = wp_str.split()
+            letter_map = {idx: ch for idx, ch in enumerate(letters)}
+            inner_map[no] = letter_map
+        mapping_by_sg[sg] = inner_map
 
-occ_err_sites = []
-equivalent_but_distinct_sites = []
-same_valence_sites = []
-intersect_orb_sites = []
-orb_none_sites = []
+    database = ICSD_valid.copy()
+    new_cols = [
+        "is_disorder",
+        "is_sub_disorder",
+        "is_vac_disorder",
+        "is_positional_disorder",
+        "fraction_of_disordered_sites",
+        "degree_of_mixing",
+        "disorder_label",
+        "wyckoff_set_std",
+        "disordered_valence_list",
+    ]
 
-for _, row in tqdm(database.iterrows(), total=len(database), desc="prescreening_ICSD"):
-    entry = ICSDEntry.from_collection_code(row["CollectionCode"], database)
-    try:
-        results = disorder_label(entry, site_tolerance= 1e-4, occ_tolerance= 1.05, vac_tolerance = 1e-2, frac_tolerance = 1e-4)
-        for c in new_cols:
-            out_lists[c].append(results.get(c, None))
+    out_lists = {c: [] for c in new_cols}
+    wyck_float_warn = []
+    main_errors = []
+    intersect_orb_errors = []
 
-        lst = results.get("wyck_float_warn")
-        if lst:
-            wyck_float_warn.extend(results.get("wyck_float_warn", []))
+    occ_err_sites = []
+    equivalent_but_distinct_sites = []
+    same_valence_sites = []
+    intersect_orb_sites = []
+    orb_none_sites = []
 
-        lst = results.get("occ_err_sites")
-        if lst:
-            occ_err_sites.extend(results.get("occ_err_sites", []))
-            
-        lst = results.get("equivalent_but_distinct_sites")
-        if lst:
-            equivalent_but_distinct_sites.extend(results.get("equivalent_but_distinct_sites", []))
+    for _, row in tqdm(database.iterrows(), total=len(database), desc="prescreening_ICSD"):
+        entry = ICSDEntry.from_collection_code(row["CollectionCode"], database)
+        try:
+            results = disorder_label(entry, site_tolerance= 1e-4, occ_tolerance= 1.05, vac_tolerance = 1e-2, frac_tolerance = 1e-4)
+            for c in new_cols:
+                out_lists[c].append(results.get(c, None))
 
-        lst = results.get("same_valence_sites")    
-        if lst:
-            same_valence_sites.extend(results.get("same_valence_sites", []))
+            lst = results.get("wyck_float_warn")
+            if lst:
+                wyck_float_warn.extend(results.get("wyck_float_warn", []))
 
-        lst = results.get("intersect_orbs")
-        if lst:
-            intersect_orb_sites.extend(results.get("intersect_orbs", []))
+            lst = results.get("occ_err_sites")
+            if lst:
+                occ_err_sites.extend(results.get("occ_err_sites", []))
 
-        lst = results.get("intersect_orb_error") 
-        if lst:
-            intersect_orb_errors.append(results.get("intersect_orb_error", []))
-            
-        lst = results.get("orb_none_entry") 
-        if lst:
-            orb_none_sites.append(results.get("orb_none_entry", []))
+            lst = results.get("equivalent_but_distinct_sites")
+            if lst:
+                equivalent_but_distinct_sites.extend(results.get("equivalent_but_distinct_sites", []))
 
-    except Exception as e:
-        out_lists[c].append(None)
-        main_errors.append((entry.CollectionCode, str(e)))
+            lst = results.get("same_valence_sites")
+            if lst:
+                same_valence_sites.extend(results.get("same_valence_sites", []))
 
-n_rows = len(database)
-for c in new_cols:
-    ln = len(out_lists[c])
-    if ln != n_rows:
-        print(f"COL {c}: length {ln} (diff {n_rows - ln})")
+            lst = results.get("intersect_orbs")
+            if lst:
+                intersect_orb_sites.extend(results.get("intersect_orbs", []))
+
+            lst = results.get("intersect_orb_error")
+            if lst:
+                intersect_orb_errors.append(results.get("intersect_orb_error", []))
+
+            lst = results.get("orb_none_entry")
+            if lst:
+                orb_none_sites.append(results.get("orb_none_entry", []))
+
+        except Exception as e:
+            out_lists[c].append(None)
+            main_errors.append((entry.CollectionCode, str(e)))
+
+    n_rows = len(database)
+    for c in new_cols:
+        ln = len(out_lists[c])
+        if ln != n_rows:
+            print(f"COL {c}: length {ln} (diff {n_rows - ln})")
+        else:
+            database[c] = out_lists[c]
+
+    import os
+    BASE_DIR = './'
+
+    path = os.path.join(BASE_DIR, 'ICSD_valid_dedup_Stol_1e-4_vtol_1e-2_occ_tol_1.05.pkl')
+    database.to_pickle(path)
+
+    if orb_none_sites:
+        path = os.path.join(BASE_DIR, 'orb_none_sites.json')
+        with open(path, 'w') as f:
+            json.dump(orb_none_sites, f, ensure_ascii=False, indent=2)
+        print(f"{len(orb_none_sites)} Sites skipped due to 'orb is None'")
+
+    if wyck_float_warn:
+        wyck_float_warn = pd.DataFrame(wyck_float_warn)
+        print(f"{len(wyck_float_warn['CollectionCode'].unique())} Entries has floating-point error in wyckoff positions")
+        path = os.path.join(BASE_DIR, 'wyck_float_warn.csv')
+        wyck_float_warn.to_csv(path, index = False)
+
+    if occ_err_sites:
+        occ_err_sites = pd.DataFrame(occ_err_sites)
+        path = os.path.join(BASE_DIR, 'occ_err_sites.csv')
+        occ_err_sites.to_csv(path, index = False)
+        print(f"{len(occ_err_sites['CollectionCode'].unique())} Entries has occ > occ_tolerance")
+
+    if equivalent_but_distinct_sites:
+        equivalent_but_distinct_sites = pd.DataFrame(equivalent_but_distinct_sites)
+        path = os.path.join(BASE_DIR, 'equivalent_but_distinct_sites.csv')
+        equivalent_but_distinct_sites.to_csv(path, index = False)
+        print(f"{len(equivalent_but_distinct_sites['CollectionCode'].unique())} Entries contain site-disorder with equivalent but distinct coordinates")
+
+    if same_valence_sites:
+        same_valence_sites = pd.DataFrame(same_valence_sites)
+        path = os.path.join(BASE_DIR, 'same_valence_sites.csv')
+        same_valence_sites.to_csv(path, index = False)
+        print(f"{len(same_valence_sites['CollectionCode'].unique())} Entries contain same elems on one orbit and is merged into one elems")
+
+    if intersect_orb_sites:
+        intersect_orb_sites = pd.DataFrame(intersect_orb_sites)
+        path = os.path.join(BASE_DIR, 'intersect_orb_sites.csv')
+        intersect_orb_sites.to_csv(path, index = False)
+        print(f"{len(intersect_orb_sites['CollectionCode'].unique())} Entries contain positional disorder")
+
+    if main_errors:
+        path = os.path.join(BASE_DIR, 'main_errors.json')
+        with open(path, 'w') as f:
+            json.dump(main_errors, f, ensure_ascii=False, indent=2)
+        print(f"The following {len(main_errors)} entries has error:")
+        for code, msg in main_errors:
+            print(f" ColletionCode{code}: {msg}")
+
+    if intersect_orb_errors:
+        path = os.path.join(BASE_DIR, 'intersect_orb_errors.json')
+        with open(path, 'w') as f:
+            json.dump(intersect_orb_errors, f, ensure_ascii=False, indent=2)
+        print(f"The following {len(intersect_orb_errors)} Entries have error when processing intersect orbit:")
+        for msg in intersect_orb_errors:
+            print(msg)
     else:
-        database[c] = out_lists[c]
-
-import os
-BASE_DIR = '/home/users/yyhuang/ICSD/deduplicate/job_script/ICSD_filter/formal_run/'
-
-path = os.path.join(BASE_DIR, 'ICSD_valid_dedup_Stol_1e-4_vtol_1e-2_occ_tol_1.05.pkl')
-database.to_pickle(path)
-
-if orb_none_sites:
-    path = os.path.join(BASE_DIR, 'orb_none_sites.json')
-    with open(path, 'w') as f:
-        json.dump(orb_none_sites, f, ensure_ascii=False, indent=2)
-    print(f"{len(orb_none_sites)} Sites skipped due to 'orb is None'")
-
-if wyck_float_warn:
-    wyck_float_warn = pd.DataFrame(wyck_float_warn)
-    print(f"{len(wyck_float_warn['CollectionCode'].unique())} Entries has floating-point error in wyckoff positions")
-    path = os.path.join(BASE_DIR, 'wyck_float_warn.csv')
-    wyck_float_warn.to_csv(path, index = False)
-
-if occ_err_sites:
-    occ_err_sites = pd.DataFrame(occ_err_sites)
-    path = os.path.join(BASE_DIR, 'occ_err_sites.csv')
-    occ_err_sites.to_csv(path, index = False)
-    print(f"{len(occ_err_sites['CollectionCode'].unique())} Entries has occ > occ_tolerance")
-
-if equivalent_but_distinct_sites:
-    equivalent_but_distinct_sites = pd.DataFrame(equivalent_but_distinct_sites)
-    path = os.path.join(BASE_DIR, 'equivalent_but_distinct_sites.csv')
-    equivalent_but_distinct_sites.to_csv(path, index = False)
-    print(f"{len(equivalent_but_distinct_sites['CollectionCode'].unique())} Entries contain site-disorder with equivalent but distinct coordiate")
-
-if same_valence_sites:
-    same_valence_sites = pd.DataFrame(same_valence_sites)
-    path = os.path.join(BASE_DIR, 'same_valence_sites.csv')
-    same_valence_sites.to_csv(path, index = False)
-    print(f"{len(same_valence_sites['CollectionCode'].unique())} Entries contain same elems on one orbit and is merged into one elems")
-
-if intersect_orb_sites:
-    intersect_orb_sites = pd.DataFrame(intersect_orb_sites)
-    path = os.path.join(BASE_DIR, 'intersect_orb_sites.csv')
-    intersect_orb_sites.to_csv(path, index = False)
-    print(f"{len(intersect_orb_sites['CollectionCode'].unique())} Entries contain positional disorder")
-
-if main_errors:
-    path = os.path.join(BASE_DIR, 'main_errors.json')
-    with open(path, 'w') as f:
-        json.dump(main_errors, f, ensure_ascii=False, indent=2)
-    print(f"The following {len(main_errors)} entries has error:")
-    for code, msg in main_errors:
-        print(f" ColletionCode{code}: {msg}")
-
-if intersect_orb_errors:
-    path = os.path.join(BASE_DIR, 'intersect_orb_errors.json')
-    with open(path, 'w') as f:
-        json.dump(intersect_orb_errors, f, ensure_ascii=False, indent=2)
-    print(f"The following {len(intersect_orb_errors)} Entries have error when processing intersect orbit:")
-    for msg in intersect_orb_errors:
-        print(msg)
-else:
-    print("completed")
+        print("completed")
