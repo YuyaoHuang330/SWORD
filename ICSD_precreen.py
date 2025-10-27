@@ -22,7 +22,7 @@ def contains_H(entry) -> bool:
 
     return bool(elems_set & {'H', 'D', 'T'})
 
-def get_non_elements(entry, excluded_elements=None) -> bool:
+def get_non_elements(entry, excluded_elements=None) -> tuple[bool, list]:
     """
     Remove symbol not in periodic table: {'M', 'D', 'T', 'X', 'L'}, 
     excluded_elements: remove user-defined unwanted element (excluded_elements) in periodic table
@@ -56,6 +56,7 @@ def check_cif_format(entry, occ_tolerance: float = 1.0):
     coord_err = wyck_err = mult_err = occ_err = False
     if any(v is None for v in entry.xs) or any(v is None for v in entry.ys) or any(v is None for v in entry.zs):
         coord_err = True
+
     # --- Wyckoff ---
     if not hasattr(entry, "wyckoffs") or entry.wyckoffs is None:
         wyck_err = True
@@ -63,6 +64,7 @@ def check_cif_format(entry, occ_tolerance: float = 1.0):
         wycks = [str(w) for w in entry.wyckoffs if w]
         if any(not w.isalpha() for w in wycks):
             wyck_err = True
+
     # --- multiplicity ---
     if not hasattr(entry, "mults") or entry.mults is None:
         mult_err = True
@@ -70,12 +72,14 @@ def check_cif_format(entry, occ_tolerance: float = 1.0):
         mults = [str(m) for m in entry.mults if m]
         if any(not m.isdigit() for m in mults):
             mult_err = True
+
     # --- occupancy ---
     if not hasattr(entry, "occ") or entry.occ is None or any(o is None for o in entry.occ):
         occ_err = True
+        err_occs_list = []
     else:
+        err_occs_list = []
         try:
-            err_occs_list = []
             occs = [float(o) for o in entry.occ]
             err_occs_list = [o for o in occs 
                              if o > occ_tolerance
@@ -86,7 +90,7 @@ def check_cif_format(entry, occ_tolerance: float = 1.0):
 
     return coord_err, wyck_err, mult_err, occ_err, err_occs_list
 
-def clean_num(token: str) -> float:
+def clean_num(token: str) -> float|None:
     base = re.sub(r"\(.*\)", "", token)
     try:
         return float(base)
@@ -138,12 +142,7 @@ class ICSDEntry:
         sym_ops = block.get("_space_group_symop_operation_xyz", [])
         sym_ops = [SymmOp.from_xyz_str(op_str) for op_str in sym_ops]
 
-        nsites = len(labels)
         points = []
-        for i in range(nsites):
-            coord = (xs[i], ys[i], zs[i])
-            points.append(coord)
-
         records = []
         for i, lab in enumerate(labels):
             coord = [xs[i], ys[i], zs[i]]
@@ -155,6 +154,7 @@ class ICSDEntry:
                 'coordinate'    : coord,
                 'occupancy'     : occupancies[i], 
             }
+            points.append(coord)
             records.append(rec)
             
         self.cif_dict = cif_dict
@@ -218,12 +218,32 @@ if __name__ == "__main__":
 
         del entry
 
-    print(f"H/D/T-containing Entries: {len(H_codes)}")
-    print(f"Non-element containing Entries: {len(non_elem_codes)}")
-    print(f"Occupancy > occ_tolerance: {len(occ_err_codes)}")
-    print(f"Coordinate error codes: {len(coord_err_codes)}")
-    print(f"General Wyckoff assignment error: {len(wyck_err_codes)}")
-    print(f"Multiplicity error codes: {len(mult_err_codes)}")
+    with open("ICSD_prescreen_report.txt", "w") as f:
+        f.write("ICSD Prescreen Report Overview\n")
+        f.write("=====================\n\n")
+
+        f.write(f"H/D/T-containing Entries: {len(H_codes)}\n")
+        f.write(f"⚠️Non-element containing Entries: {len(non_elem_codes)}\n")
+        f.write(f"⚠️Occupancy > occ_tolerance: {len(occ_err_codes)}\n")
+        f.write(f"⚠️Coordinate error codes: {len(coord_err_codes)}\n")
+        f.write(f"⚠️General Wyckoff assignment error: {len(wyck_err_codes)}\n")
+        f.write(f"⚠️Multiplicity error codes: {len(mult_err_codes)}\n\n")
+
+        f.write("Detailed Lists:\n")
+        f.write("=====================\n\n")
+        f.write("⚠️Entries with Occupancy Errors:\n")
+        for code, occs in occ_err_list:
+            f.write(f"  CollectionCode {code}: Occupancy values {occs}\n")
+        f.write("\n")
+
+        f.write("⚠️Entries with Non-element Symbols:\n")
+        for code, elems in non_elem_list:
+            f.write(f"  CollectionCode {code}: Non-elements {elems}\n")
+        f.write("\n")
+
+        f.write(f"Coordinate Error Codes: {coord_err_codes}\n")
+        f.write(f"Wyckoff Assignment Error Codes: {wyck_err_codes}\n")
+        f.write(f"Multiplicity Error Codes: {mult_err_codes}\n")
 
     unwanted_codes = set().union(*[H_codes, non_elem_codes, occ_err_codes, coord_err_codes, wyck_err_codes, mult_err_codes])
     ICSD_screened = ICSD[~ICSD['CollectionCode'].isin(unwanted_codes)]
