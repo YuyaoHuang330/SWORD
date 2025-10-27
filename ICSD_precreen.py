@@ -1,12 +1,13 @@
 import pandas as pd
 from io import StringIO
 import re
+import os
 from pymatgen.io.cif import CifParser
 from pymatgen.core.operations import SymmOp
+from pymatgen.core.periodic_table import Element
 from tqdm import tqdm
 import warnings
 
-ICSD = pd.read_pickle('/home/users/yyhuang/ICSD/deduplicate/ICSD2024_summary_w_spg_info.pkl')
 
 def contains_H(entry) -> bool:
     """
@@ -21,8 +22,6 @@ def contains_H(entry) -> bool:
 
     return bool(elems_set & {'H', 'D', 'T'})
 
-
-from pymatgen.core.periodic_table import Element
 def get_non_elements(entry, excluded_elements=None) -> bool:
     """
     Remove symbol not in periodic table: {'M', 'D', 'T', 'X', 'L'}, 
@@ -87,7 +86,6 @@ def check_cif_format(entry, occ_tolerance: float = 1.0):
 
     return coord_err, wyck_err, mult_err, occ_err, err_occs_list
 
-
 def clean_num(token: str) -> float:
     base = re.sub(r"\(.*\)", "", token)
     try:
@@ -110,8 +108,7 @@ class ICSDEntry:
             self.CollectionCode = None
 
         cif_str = StringIO(cif_text)
-        parser = CifParser(cif_str)
-        cif_dict = parser.as_dict()
+        cif_dict = CifParser(cif_str).as_dict()
         block_name = list(cif_dict.keys())[0]
         block = cif_dict[block_name]
         try:
@@ -187,47 +184,48 @@ class ICSDEntry:
         return cls(cif_text, meta=meta, collection_code = collection_code)
 
 
-coord_err_codes = []
-wyck_err_codes = []
-mult_err_codes = []
-occ_err_codes = []
-occ_err_list = []
-non_elem_codes = []
-non_elem_list = []
-H_codes = []
+if __name__ == "__main__":
+    ICSD = pd.read_csv('/home/users/jhwang/database/ICSD/ICSD2024_summary_2024.2_v5.3.0.csv')
 
-for _, row in tqdm(ICSD.iterrows(), total=len(ICSD), desc="prescreening_ICSD"):
-    entry = ICSDEntry.from_collection_code(row["CollectionCode"], ICSD)
+    coord_err_codes = []
+    wyck_err_codes = []
+    mult_err_codes = []
+    occ_err_codes = []
+    occ_err_list = []
+    non_elem_codes = []
+    non_elem_list = []
+    H_codes = []
 
-    coord_err, wyck_err, mult_err, occ_err, occ_err_values = check_cif_format(entry, occ_tolerance= 1.05)
-    if coord_err: coord_err_codes.append(entry.CollectionCode)
-    if wyck_err:  wyck_err_codes.append(entry.CollectionCode)
-    if mult_err:  mult_err_codes.append(entry.CollectionCode)
-    if occ_err:   
-        occ_err_codes.append(entry.CollectionCode)
-        occ_err_list.append((entry.CollectionCode, occ_err_values))
+    for _, row in tqdm(ICSD.iterrows(), total=len(ICSD), desc="prescreening_ICSD"):
+        entry = ICSDEntry.from_collection_code(row["CollectionCode"], ICSD)
 
-    contain_non_elems, non_elems = get_non_elements(entry, ['He','Ne','Ar','Kr','Es'])
-    if contain_non_elems:
-        non_elem_codes.append(entry.CollectionCode)
-        non_elem_list.append((entry.CollectionCode, non_elems))
+        coord_err, wyck_err, mult_err, occ_err, occ_err_values = check_cif_format(entry, occ_tolerance= 1.05)
+        if coord_err: coord_err_codes.append(entry.CollectionCode)
+        if wyck_err:  wyck_err_codes.append(entry.CollectionCode)
+        if mult_err:  mult_err_codes.append(entry.CollectionCode)
+        if occ_err:
+            occ_err_codes.append(entry.CollectionCode)
+            occ_err_list.append((entry.CollectionCode, occ_err_values))
 
-    has_H = contains_H(entry)
-    if has_H:
-        H_codes.append(entry.CollectionCode)
-        
-    del entry
+        contain_non_elems, non_elems = get_non_elements(entry, ['He','Ne','Ar','Kr','Es'])
+        if contain_non_elems:
+            non_elem_codes.append(entry.CollectionCode)
+            non_elem_list.append((entry.CollectionCode, non_elems))
 
-print(f"H/D/T-containing Entries: {len(H_codes)}")
-print(f"Non-element containing Entries: {len(non_elem_codes)}")
-print(f"Occupancy > occ_tolerance: {len(occ_err_codes)}")
-print(f"Coordinate error codes: {len(coord_err_codes)}")
-print(f"General Wyckoff assignment error: {len(wyck_err_codes)}")
-print(f"Multiplicity error codes: {len(mult_err_codes)}")
+        has_H = contains_H(entry)
+        if has_H:
+            H_codes.append(entry.CollectionCode)
 
-unwanted_codes = set().union(*[H_codes, non_elem_codes, occ_err_codes, coord_err_codes, wyck_err_codes, mult_err_codes])
-ICSD_screened = ICSD[~ICSD['CollectionCode'].isin(unwanted_codes)]
+        del entry
 
-#BASE_DIR = #your output path
-# path = os.path.join(BASE_DIR, 'name_of_icsd.pkl')
-# database.to_pickle(path)
+    print(f"H/D/T-containing Entries: {len(H_codes)}")
+    print(f"Non-element containing Entries: {len(non_elem_codes)}")
+    print(f"Occupancy > occ_tolerance: {len(occ_err_codes)}")
+    print(f"Coordinate error codes: {len(coord_err_codes)}")
+    print(f"General Wyckoff assignment error: {len(wyck_err_codes)}")
+    print(f"Multiplicity error codes: {len(mult_err_codes)}")
+
+    unwanted_codes = set().union(*[H_codes, non_elem_codes, occ_err_codes, coord_err_codes, wyck_err_codes, mult_err_codes])
+    ICSD_screened = ICSD[~ICSD['CollectionCode'].isin(unwanted_codes)]
+
+    ICSD_screened.to_pickle("icsd_screened.pkl")

@@ -13,10 +13,11 @@ import itertools
 from itertools import combinations_with_replacement
 from collections import Counter, defaultdict
 
-ICSD = pd.read_pickle('/home/users/yyhuang/ICSD/deduplicate/ICSD2024_summary_w_spg_info.pkl')
-ICSD_valid = pd.read_pickle('/home/users/yyhuang/ICSD/deduplicate/job_script/ICSD_filter/ICSD_screened.pkl')
-wyckoff_sets = pd.read_json('/home/users/yyhuang/ICSD/deduplicate/wyckoff_sets.json')
-radius_df = pd.read_csv('/home/users/yyhuang/ICSD/deduplicate/all_radii.csv')
+ICSD = pd.read_csv('/home/users/jhwang/database/ICSD/ICSD2024_summary_2024.2_v5.3.0.csv')
+ICSD_valid = pd.read_pickle('ICSD_screened.pkl')
+wyckoff_sets = pd.read_json('wyckoff_sets.json')
+radius_df = pd.read_csv('all_radii.csv')
+
 
 def clean_num(token: str) -> float:
     base = re.sub(r"\(.*\)", "", token)
