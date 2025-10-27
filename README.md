@@ -2,7 +2,23 @@
 
 **Classifying, labelling and filtering ICSD, identify high-quality and trustworthy ICSD entries**
 
-# 1. Creating an ICSDEntry instance:
+<div id="note" style="border:1px solid #d0d7de; padding:16px; background:#fcffd2; border-radius:6px;">
+<strong style="font-size:1.05em;">Known issues of ICSD</strong>
+
+<p style="margin-top:0.5em;">
+(1). Non-element symbols (e.g., {'M', 'D', 'T', 'X', 'L'});
+
+(2). Occupancy larger than 1.0;
+
+(3). Coordinates error (e.g. 0.2840.29018(16) - See ICSD CollectionCode 70589);
+
+(4). Wyckoff letter error (e.g., ‘*’)
+</p>
+
+See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
+</div>
+
+# 1. ICSDEntry instance:
 
 `ICSDEntry`:
 
@@ -66,7 +82,7 @@ Run the file (it will take about 7 mins):
     occupancy: occupancy value > occ_tolerance (default as 1.0), or occupancy < 0. (note: can only identify the occupancy of individual site; it is unable to sum the occupancy values for disordered sites.)
     
 
-# Labelling ICSDEntry:
+# 3. Labelling ICSDEntry:
 
 After pre-screening process, the ICSD entries can be labelled now:
 
@@ -89,7 +105,7 @@ If sum of occupancy of a site is between 1 and occupancy_tolerance, it will be s
 
 Determine the rounding precision for all algebraic operation involved in disorder_label, default as 1e-4. (note: It is recommended the rounding precision **be kept at 1e-4** or higher(1e-5), and use a tolerance in the 1e-x format, **avoiding coefficients other than 1** (e.g., avoid using 2e-4))
 
-# Post-processing:
+# 4. Post-processing:
 
 After running `ICSD_filter.py`, following documents will be generated:
 
