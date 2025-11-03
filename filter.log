@@ -1,0 +1,7 @@
+750 Entries has floating-point error in wyckoff positions
+345 Entries has occ > occ_tolerance
+511 Entries contain site-disorder with equivalent but distinct coordinates
+431 Entries contain same elems on one orbit and is merged into one elems
+20995 Entries contain positional disorder
+The following 1 Entries have error when processing intersect orbit:
+CollectionCode 148749: intersect_orb failed: Invalid CIF file with no structures!
