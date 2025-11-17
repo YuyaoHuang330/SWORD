@@ -184,7 +184,7 @@ def get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, space_group_number):
                 equivalent_sequence_list.extend(itertools.product(*indices))
 
             if equivalent_sequence_list:
-                best_tuple = min(equivalent_sequence_list, key=lambda t: (sum(t), t))
+                best_tuple = min(equivalent_sequence_list, key=lambda t: (sum(t), t)) # tie-break by lexicographic order when sums equal
                 first_wp_no = min(wp_mappings)
                 idx_to_letter = wp_mappings[first_wp_no]
                 letter_seq = [idx_to_letter.get(idx, '?') for idx in best_tuple]
@@ -524,7 +524,7 @@ def disorder_label(entry, site_tolerance: float = 0.0001, vac_tolerance: float =
             elem_part = "{" + ",".join(elem_parts) + "}"
 
         sequence_map[wyckoff_part] = elem_part
-    sequence_map = dict(sorted(sequence_map.items(), key=lambda kv: kv[1]))
+    sequence_map = dict(sorted(sequence_map.items(), key=lambda kv: kv[1])) #sort by value
     element_seq = "_".join(sequence_map.values())
     #=========================section 3.2: calculating fraction_of_disordered_sites, and degree_of_mixing==================================
     if disordered_label_list:
