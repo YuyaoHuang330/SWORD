@@ -31,7 +31,7 @@ def dedupe_by_highest_DOM(deg_list, code_list):
     return code_list[idx]
 
 
-# Deduplicate by removing CollectionCode with same degree of mixing (would give only one representative for each structure group)
+# Deduplicate by removing CollectionCode with same degree of mixing (would give multiple representatives for each structure group)
 def dedupe_by_same_DOM(deg_list, code_list):
     if deg_list is None or code_list is None:
         return code_list or []
@@ -76,7 +76,7 @@ ICSD_group = (
         CollectionCode_list= ('CollectionCode', list),
         StructuredFormula_list=('StructuredFormula', list),
         WyckoffSequence_lists = ('WyckoffSequence',list),
-        #disorder_lists = ('disordered_list',list),
+        # disorder_lists = ('disordered_list',list),
         degree_of_mixing_list=('degree_of_mixing', list),
         n_disorder         = ('is_disorder', 'sum'),
     )
@@ -85,14 +85,14 @@ ICSD_group = (
 ICSD_group['n_disorder'] = ICSD_group['n_disorder'].astype(int)
 
 ICSD_group['selected_collection_code'] = ICSD_group.apply(
-    lambda r: dedupe_by_highest_DOM(r['degree_of_mixing_list'], r['CollectionCode_list']),
+    lambda r: dedupe_by_same_DOM(r['degree_of_mixing_list'], r['CollectionCode_list']),
     axis=1
 )
 
 duplicated_codes = {c for v in ICSD_group['selected_collection_code'].dropna() for c in (v if isinstance(v, (list,tuple,set)) else [v])}
 ICSD_deduplicated = filtered[filtered['CollectionCode'].isin(duplicated_codes)].copy()
 
-ICSD_deduplicated.to_csv("deduplicated_final.csv", index=False)
+ICSD_deduplicated.to_csv("deduplicated_multi_final.csv", index=False)
 
 print(len(df_main), len(ICSD_deduplicated))
 print(ICSD_deduplicated.columns)
