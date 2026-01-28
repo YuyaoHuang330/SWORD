@@ -22,20 +22,18 @@ See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
 `from utils_SWORD import get_sword_label`
 `from utils_SWORD import get_sword_info`
 1. return SWORD_label: 
-`label = get_sword_label(structure)`  #pymatgen.core.Structure
-
+`label = get_sword_label(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
 #or
-
-`label = get_sword_label(cif_text)`
+`label = get_sword_label(cif_text, symprec={your_preferred_symprec})`
 #or
-`label = get_sword_label("path/to/file.cif")`
+`label = get_sword_label("path/to/file.cif", symprec={your_preferred_symprec})`
 
 3. return all information
-`entry, dict = get_sword_info(structure)`  #pymatgen.core.Structure
+`entry, dict = get_sword_info(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
 #or
-`entry, dict = get_sword_info(cif_text)`
+`entry, dict = get_sword_info(cif_text, symprec={your_preferred_symprec})`
 #or
-`entry, dict = get_sword_info("path/to/file.cif")`
+`entry, dict = get_sword_info("path/to/file.cif", symprec={your_preferred_symprec})`
 `display(entry.df)`
 
 # Introduction of Main functions:
