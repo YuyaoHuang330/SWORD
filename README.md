@@ -46,14 +46,14 @@ The instance can be constructed by:
 
 **From ICSD CollectionCode:**
 
-`ICSDEntry.from_CollectionCode(CollectionCode, ICSD: pd.Dtaframe = None)`
+`StructureEntry.from_CollectionCode(CollectionCode, ICSD: pd.Dtaframe = None)`
 A valid `CollectionCode` is required, and the target entry must exist within the `ICSD` DataFrame you are using:
 
-`example = ICSDEntry.from_collection_code(137626, ICSD)`
+`example = StructureEntry.from_collection_code(137626, ICSD)`
 
 **From CIF text:**
 
-`example = ICSDEntry.from_cif(cif_str)`
+`example = StructureEntry.from_cif(cif_str)`
 
 ```
         **Frequently used entry.attribute:**
@@ -103,7 +103,7 @@ Run the file (it will take about 7 mins):
   occupancy: occupancy value > occ_tolerance (default as 1.0), or occupancy < 0. (note: can only identify the occupancy of individual site; it is unable to sum the occupancy values for disordered sites.)
 
 
-# 3. Labelling ICSDEntry:
+# 3. Labelling StructureEntry:
 
 After pre-screening process, the ICSD entries can be labelled now:
 
@@ -166,7 +166,7 @@ After running `ICSD_filter.py` , following documents will be returned:
   - `intersect_orb.csv`: Recording positional disordered sites. Two sites are intersect if distance between sites < threshold, refer to: [Exploration of positional disorder](https://www.notion.so/Exploration-of-positional-disorder-277368b04661808f9f59e25207e3a437?pvs=21)
   - `intersect_orb_error.json`: triggered when positional disorder related codes return error. Possible reasons: 1. contain elements that cannot define radius (noble gas, radioactive, etc); 2. Pymatgen Error(normally the occupancy>occ_tolerance is detect). 3. Pymatgen error: non-standard records in CIF. This **will remain empty** if consistent occ_tolerance are used in prescreeing and labelling.
   - `orb_none_entry.json`: The code failed to process wyckoff position based on symmetry operation recorded in CIF. **Normally, this will remain empty**. However, this might be useful for the user-generated CIF (e.g from generative model instead of ICSD).
-  - `main_err.json`: Normally empty. The `disorder_label` fail to process `ICSDEntry`. Contact me.
+  - `main_err.json`: Normally empty. The `disorder_label` fail to process `StructureEntry`. Contact me.
 
 
 After running ICSD_filter.py, to generate a more clean ICSD database, the CollectionCode from following documents can be removed from ICSD if you trust the results:
