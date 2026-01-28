@@ -1,4 +1,4 @@
-# ICSD-classifier
+# SWORD——Symmetry and Wyckoff-sequence of Ordered and Disordered crystals
 
 **Classifying, labelling and filtering ICSD, identify high-quality and trustworthy ICSD entries**
 
@@ -18,11 +18,30 @@
 See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
 </div>
 
-# 1. ICSDEntry instance:
+# How to Use SWORD:
+from utils_SWORD import get_sword_label
+from utils_SWORD import get_sword_info
+1. return SWORD_label
+label = get_sword_label(structure)  #pymatgen.core.Structure
+#or
+label = get_sword_label(cif_text)
+#or
+label = get_sword_label("path/to/file.cif")
 
-`ICSDEntry`:
+2. return all information
+entry, dict = get_sword_info(structure)  #pymatgen.core.Structure
+#or
+entry, dict = get_sword_info(cif_text)
+#or
+entry, dict = get_sword_info("path/to/file.cif")
+display(entry.df)
 
-The ICSD CIF wrapper: `ICSDEntry` use `Pymatgen CifParser` to read original CIF file and retrieve key crystallographic information via `entry.attribute` notation
+# Introduction of Main functions:
+# 1. StructureEntry instance:
+
+`StructureEntry`:
+
+The CIF wrapper: `StructureEntry` use `Pymatgen CifParser` to read original CIF file and retrieve key crystallographic information via `entry.attribute` notation
 The instance can be constructed by:
 
 **From ICSD CollectionCode:**
