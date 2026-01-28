@@ -23,12 +23,14 @@ See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
 `from utils_SWORD import get_sword_info`
 1. return SWORD_label: 
 `label = get_sword_label(structure)`  #pymatgen.core.Structure
+
 #or
+
 `label = get_sword_label(cif_text)`
 #or
 `label = get_sword_label("path/to/file.cif")`
 
-2. return all information
+3. return all information
 `entry, dict = get_sword_info(structure)`  #pymatgen.core.Structure
 #or
 `entry, dict = get_sword_info(cif_text)`
