@@ -36,6 +36,42 @@ See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
 `entry, dict = get_sword_info("path/to/file.cif", symprec={your_preferred_symprec})`
 `display(entry.df)`
 
+## ICSD-specific interfaces (for ICSD cleaning)
+**Import**
+`from utils_SWORD import get_sword_label_for_ICSD`  
+`from utils_SWORD import get_sword_info_for_ICSD`
+
+### 1) Return SWORD label only
+`label = get_sword_label_for_ICSD(collection_code, ICSD_df=ICSD_df)`
+
+### 2) Return full information
+`entry, info = get_sword_info_for_ICSD(collection_code, ICSD_df=ICSD_df)`  
+`display(entry.df)`
+
+> Note: `collection_code` is the ICSD CollectionCode; `ICSD_df` is a DataFrame containing `CollectionCode` and `cif` columns.
+
+## find_parent_ICSD
+**Purpose**  
+Finds the parent ICSD entry for a given random ordered child structure and returns the parent candidate(s) SWORD label based on matching rules.
+
+**Input**  
+- `child`: ordered child structure (**same accepted types as `get_sword_label`** )  
+- `ICSD_df`: ICSD database/DataFrame **with SWORD labels** (must include `CollectionCode`, and `disorder_label` columns)  
+- other optional parameters, symprec_child: symprec of labelling ordered structures, symprec_search: symprec of searching & recovering parent label)
+**Output**  
+- **list of dicts**, e.g.
+[
+{
+'child_label': 'e_f_j_a_136_Cr_O_O_Ta',
+'parent_label': 'f_a_136_O_{Cr+Ta}',
+'matched_labels': ['f_a_136_O_{Cr+Ta}', 'f_a_136_O_{Cr+Ta}', 'f_a_136_O_{Cr+Ta}'],
+'id': [247441, 9516, 72276]
+}
+]
+**Example**
+`parent_code = find_parent_ICSD(child, ICSD_df=ICSD_df)`
+
+
 # Introduction of Main functions:
 # 1. StructureEntry instance:
 
