@@ -34,22 +34,13 @@
 
 ## find_parent_ICSD
 **Purpose**  
-Finds the parent ICSD entry for a given random ordered child structure and returns the parent candidate(s) SWORD label based on matching rules.
+Finds the parent disordered ICSD entry from a given random ordered child structure and returns the parent candidate(s) SWORD label based on matching rules.
 
 **Input**  
 - `child`: ordered child structure (**same accepted types as `get_sword_label`** )  
 - `ICSD_df`: ICSD database/DataFrame **with SWORD labels** (must include `CollectionCode`, and `disorder_label` columns)  
 - other optional parameters, symprec_child: symprec of labelling ordered structures, symprec_search: symprec of searching & recovering parent label)
-**Output**  
-- **list of dicts**, e.g.
-[
-{
-'child_label': 'e_f_j_a_136_Cr_O_O_Ta',
-'parent_label': 'f_a_136_O_{Cr+Ta}',
-'matched_labels': ['f_a_136_O_{Cr+Ta}', 'f_a_136_O_{Cr+Ta}', 'f_a_136_O_{Cr+Ta}'],
-'id': [247441, 9516, 72276]
-}
-]
+
 **Example**
 `parent_code = find_parent_ICSD(child, ICSD_df=ICSD_df)`
 
