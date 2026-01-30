@@ -1,23 +1,5 @@
 # SWORD——Symmetry and Wyckoff-sequence of Ordered and Disordered crystals
 
-**Classifying, labelling and filtering ICSD, identify high-quality and trustworthy ICSD entries**
-
-<div id="note" style="border:1px solid #d0d7de; padding:16px; background:#fcffd2; border-radius:6px;">
-<strong style="font-size:1.05em;">Known issues of ICSD</strong>
-
-<p style="margin-top:0.5em;">
-(1). Non-element symbols (e.g., {'M', 'D', 'T', 'X', 'L'});
-
-(2). Occupancy larger than 1.0;
-
-(3). Coordinates error (e.g. 0.2840.29018(16) - See ICSD CollectionCode 70589);
-
-(4). Wyckoff letter error (e.g., ‘*’)
-</p>
-
-See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
-</div>
-
 # How to Use SWORD:
 `from utils_SWORD import get_sword_label`
 `from utils_SWORD import get_sword_info`
@@ -73,6 +55,25 @@ Finds the parent ICSD entry for a given random ordered child structure and retur
 
 
 # Introduction of Main functions:
+
+**Classifying, labelling and filtering ICSD, identify high-quality and trustworthy ICSD entries**
+
+<div id="note" style="border:1px solid #d0d7de; padding:16px; background:#fcffd2; border-radius:6px;">
+<strong style="font-size:1.05em;">Known issues of ICSD</strong>
+
+<p style="margin-top:0.5em;">
+(1). Non-element symbols (e.g., {'M', 'D', 'T', 'X', 'L'});
+
+(2). Occupancy larger than 1.0;
+
+(3). Coordinates error (e.g. 0.2840.29018(16) - See ICSD CollectionCode 70589);
+
+(4). Wyckoff letter error (e.g., ‘*’)
+</p>
+
+See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
+</div>
+
 # 1. StructureEntry instance:
 
 `StructureEntry`:
