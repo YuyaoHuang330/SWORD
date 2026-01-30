@@ -1244,34 +1244,6 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
         "intersect_orb_error": intersect_orb_error
     } 
 
-def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
-    child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
-    elements = sorted([el.symbol for el in child.composition.elements])
-    mask_sets = [
-        comb
-        for k in range(2, len(elements) + 1)
-        for comb in combinations(elements, k)
-    ]
-
-    out = []
-    for mask in mask_sets:
-        masked = child.copy()
-        masked.replace_species({el: DummySpecie("X", 0) for el in mask})
-        label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
-
-        mix = "+".join(sorted(mask))
-        label = label.replace("X", f"{{{mix}}}")
-
-        rows = icsd_df[icsd_df["disorder_label"] == label]
-        out.append({
-            "child_label": child_label,
-            "parent_label": label,
-            "matched_labels": rows["disorder_label"].tolist(),
-            "id": rows["CollectionCode"].tolist(),
-        })
-    return out
-
-
 def get_sword_label(
     data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
     *,
@@ -1356,6 +1328,33 @@ def get_sword_info(
         frac_tolerance=frac_tolerance,
         verbose=False,
     )
+
+def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+    child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
+    elements = sorted([el.symbol for el in child.composition.elements])
+    mask_sets = [
+        comb
+        for k in range(2, len(elements) + 1)
+        for comb in combinations(elements, k)
+    ]
+
+    out = []
+    for mask in mask_sets:
+        masked = child.copy()
+        masked.replace_species({el: DummySpecie("X", 0) for el in mask})
+        label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
+
+        mix = "+".join(sorted(mask))
+        label = label.replace("X", f"{{{mix}}}")
+
+        rows = icsd_df[icsd_df["disorder_label"] == label]
+        out.append({
+            "child_label": child_label,
+            "parent_label": label,
+            "matched_labels": rows["disorder_label"].tolist(),
+            "id": rows["CollectionCode"].tolist(),
+        })
+    return out
 
 def get_sword_label_for_ICSD(
     collection_code,
