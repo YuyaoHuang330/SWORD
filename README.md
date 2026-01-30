@@ -4,19 +4,19 @@
 `from utils_SWORD import get_sword_label`
 `from utils_SWORD import get_sword_info`
 1. return SWORD_label: 
-`label = get_sword_label(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
+- `label = get_sword_label(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
 #or
-`label = get_sword_label(cif_text, symprec={your_preferred_symprec})`
+- `label = get_sword_label(cif_text, symprec={your_preferred_symprec})`
 #or
-`label = get_sword_label("path/to/file.cif", symprec={your_preferred_symprec})`
+- `label = get_sword_label("path/to/file.cif", symprec={your_preferred_symprec})`
 
 3. return all information
-`entry, dict = get_sword_info(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
+- `entry, dict = get_sword_info(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
 #or
-`entry, dict = get_sword_info(cif_text, symprec={your_preferred_symprec})`
+- `entry, dict = get_sword_info(cif_text, symprec={your_preferred_symprec})`
 #or
-`entry, dict = get_sword_info("path/to/file.cif", symprec={your_preferred_symprec})`
-`display(entry.df)`
+- `entry, dict = get_sword_info("path/to/file.cif", symprec={your_preferred_symprec})`
+- `display(entry.df)`
 
 ## ICSD-specific interfaces (for ICSD cleaning)
 **Import**
