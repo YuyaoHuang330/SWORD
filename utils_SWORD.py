@@ -1329,7 +1329,14 @@ def get_sword_info(
         verbose=False,
     )
 
-def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+def find_parent_ICSD(child_data, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+    
+    if isinstance(child_data, Structure):
+        child = child_data
+    else:
+        child = Structure.from_str(child_data, fmt="cif") if "\n" in str(child_data) \
+                else Structure.from_file(child_data)
+
     child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
     elements = sorted([el.symbol for el in child.composition.elements])
     mask_sets = [
@@ -1338,7 +1345,10 @@ def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #s
         for comb in combinations(elements, k)
     ]
 
-    out = []
+    all_parent_labels = []
+    all_matched_labels = []
+    all_matched_ids = []
+
     for mask in mask_sets:
         masked = child.copy()
         masked.replace_species({el: DummySpecie("X", 0) for el in mask})
@@ -1346,15 +1356,20 @@ def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #s
 
         mix = "+".join(sorted(mask))
         label = label.replace("X", f"{{{mix}}}")
+        
+        all_parent_labels.append(label)
 
         rows = icsd_df[icsd_df["disorder_label"] == label]
-        out.append({
-            "child_label": child_label,
-            "parent_label": label,
-            "matched_labels": rows["disorder_label"].tolist(),
-            "id": rows["CollectionCode"].tolist(),
-        })
-    return out
+        if not rows.empty:
+            all_matched_labels.extend(rows["disorder_label"].unique().tolist())
+            all_matched_ids.extend(rows["CollectionCode"].tolist())
+
+    return {
+        "child_label": child_label,
+        "parent_labels": all_parent_labels,
+        "matched_labels": list(set(all_matched_labels)), # Unique matched SWORD labels
+        "matched_ids": list(set(all_matched_ids))        # Unique matched IDs
+    }
 
 def get_sword_label_for_ICSD(
     collection_code,
