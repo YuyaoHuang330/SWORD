@@ -1286,6 +1286,70 @@ def get_sword_label(
         verbose=False,
     )["disorder_label"]
 
+def get_sword_label_from_pyxtal(pyxtal_dict):
+    """
+    Generates a SWORD label from a PyXtal dictionary representation.
+
+    Args:
+        pyxtal_dict (dict): A dictionary containing 'group' (int), 
+                            'sites' (list of lists of strings), 
+                            and 'species' (list of strings).
+
+    Returns:
+        str: The standardized SWORD label.
+    """
+    sg_num = int(pyxtal_dict['group'])
+    species_list = pyxtal_dict['species']
+    sites_list = pyxtal_dict['sites']
+    
+    # 1. Group elements by Wyckoff letter
+    # Flatten the PyXtal structure: Wyckoff Letter -> List of elements on that site
+    wyck_groups = defaultdict(list)
+    
+    for species, site_sublist in zip(species_list, sites_list):
+        for site_str in site_sublist:
+            # Extract just the letter (e.g., '4h' -> 'h', '18e' -> 'e')
+            letter = "".join(filter(str.isalpha, site_str))
+            wyck_groups[letter].append(species)
+            
+    # 2. Construct the sequence map (Key: WyckoffPart, Value: ElementPart)
+    sequence_map = {}
+    
+    for letter, elems in wyck_groups.items():
+        count = len(elems) # Number of distinct orbits (sites) for this letter
+        
+        # Build Wyckoff Part (e.g., 'a' or 'a12')
+        wyck_key = f"{letter}{count}" if count > 1 else letter
+        
+        # Build Element Part
+        # Count element occurrences: e.g. {'Sn': 5, 'Te': 6, 'Ag': 1}
+        cnts = Counter(elems)
+        parts = []
+        for el, n in cnts.items():
+            if n > 1:
+                parts.append(f"{n}{el}")
+            else:
+                parts.append(el)
+        
+        # Sort parts as strings (standard lexicographical sort matches SWORD format: 10 < 2, 5 < 6 < A)
+        parts.sort()
+        
+        # Determine formatting based on orbit count
+        # If multiple sites exist for this letter, enclose in brackets {}
+        if count == 1:
+            elem_val = parts[0]
+        else:
+            elem_val = "{" + ",".join(parts) + "}"
+            
+        sequence_map[wyck_key] = elem_val
+
+    # PyXtal-generated sequences have some canonicalization issues; bypassing for now (need to investigate further)
+    wyckoff_set_std, element_seq, _ = get_canonical_wyckoff_sets(
+        sequence_map, mapping_by_sg, sg_num
+    )
+    
+    return f"{wyckoff_set_std}_{sg_num}_{element_seq}"
+
 def get_sword_info(
     data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
     *,
