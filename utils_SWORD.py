@@ -5,7 +5,9 @@ import re
 import numpy as np
 import pandas as pd
 import json
+import sys
 import itertools
+import subprocess
 from typing import Any
 from typing import Union
 from io import StringIO
@@ -21,8 +23,6 @@ from itertools import combinations_with_replacement
 
 from itertools import combinations
 from pymatgen.core.periodic_table import DummySpecie
-#from material_hasher.hasher import HASHERS
-
 
 radius_df = pd.read_csv('/home/users/yyhuang/ICSD/deduplicate/all_radii.csv')
 wyckoff_sets = pd.read_json('/home/users/yyhuang/ICSD/deduplicate/wyckoff_sets.json')
@@ -748,60 +748,55 @@ for sg in wyckoff_sets.index:
         inner_map[no] = letter_map  
     mapping_by_sg[sg] = inner_map
 
-def get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, space_group_number):
-    """
-    Canonicalize (wyckoff_part -> elem_part) by enumerating all Transformed WP mappings,
-    re-sorting each transformed map by (value, key), and taking lexicographically minimal
-    (wyckoff_seq, element_seq).
-    """
-    wp_mappings = mapping_by_sg.get(space_group_number, {})
-    # fallback: no mapping table
-    if not wp_mappings:
-        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
-        return "_".join(seq_sorted.keys()), "_".join(seq_sorted.values()), seq_sorted
+_KEY_PAT = re.compile(r"^([A-Za-z]+)(\d*)$")
 
-    base_no = min(wp_mappings)
-    base_idx_to_letter = wp_mappings[base_no]
-    base_letter_to_idx = {ch: idx for idx, ch in base_idx_to_letter.items()}
+_SWORD_DIR = os.path.dirname(__file__)
+_HALL_WP_JSON = os.path.join(_SWORD_DIR, "sword_hall_wp_perms_by_sg.json")
 
-    def transform_key(k, idx_to_letter):
-        m = re.fullmatch(r"([A-Za-z]+)(\d*)", k)
-        if not m:
-            return None
-        ch, suf = m.group(1), m.group(2) or ""
-        idx = base_letter_to_idx.get(ch)
-        if idx is None:
-            return None
-        new_ch = idx_to_letter.get(idx)
-        if new_ch is None:
-            return None
-        return f"{new_ch}{suf}"
+with open(_HALL_WP_JSON, "r") as f:
+    _raw_hall_wp = json.load(f)
+
+_SWORD_HALL_WP_PERMS = {
+    int(sg): tuple({str(k): str(v) for k, v in p.items()} for p in perms)
+    for sg, perms in _raw_hall_wp.items()
+}
+
+def _get_hall_wp_perms():
+    return _SWORD_HALL_WP_PERMS
+
+def get_canonical_wyckoff_sets(sequence_map, space_group_number):
+    """
+    Pure canonicalization:
+    - get precomputed Hall+WP perms for SG
+    - apply each perm to sequence_map
+    - sort by (value, key)
+    - return lexicographically smallest (wyckoff_seq, element_seq, transformed_map)
+    """
+    if not (isinstance(sequence_map, dict) and sequence_map):
+        return "", "", {}
+
+    sg = int(space_group_number)
+    perms = _get_hall_wp_perms()[sg]  # expected to exist for all SG after build
 
     candidates = []
-    for _, idx_to_letter in wp_mappings.items():
+    for perm in perms:
         transformed = {}
-        ok = True
         for k, v in sequence_map.items():
-            nk = transform_key(k, idx_to_letter)
-            if nk is None:
-                ok = False
-                break
-            transformed[nk] = v
-        if not ok:
-            continue
+            m = _KEY_PAT.fullmatch(str(k).strip())
+            if not m:
+                raise ValueError(f"Invalid Wyckoff key format: {k!r}")
+            letter, suffix = m.group(1), (m.group(2) or "")
+            transformed[f"{perm[letter]}{suffix}"] = v
 
-        transformed_sorted = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
-        wyck_seq = "_".join(transformed_sorted.keys())
-        elem_seq = "_".join(transformed_sorted.values())
-        candidates.append((wyck_seq, elem_seq, transformed_sorted))
+        transformed = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
+        candidates.append((
+            "_".join(transformed.keys()),
+            "_".join(transformed.values()),
+            transformed,
+        ))
+        wyck_seq, elem_seq, seq_std = min(candidates, key=lambda t: (t[0], t[1]))
 
-    if not candidates:
-        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
-        return "_".join(seq_sorted.keys()), "_".join(seq_sorted.values()), seq_sorted
-
-    wyck_seq, elem_seq, seq_std = min(candidates, key=lambda t: (t[0], t[1]))
     return wyck_seq, elem_seq, seq_std
-
 
 def mean_site_radius(species_list):
     """
@@ -1198,7 +1193,7 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
     #wyckoff_set_std = get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, entry.spg_num)
     #disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"      
     wyckoff_set_std, element_seq, sequence_map_std = get_canonical_wyckoff_sets(
-    sequence_map, mapping_by_sg, entry.spg_num
+    sequence_map, entry.spg_num
     )
     disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"
 
@@ -1244,6 +1239,7 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
         "intersect_orb_error": intersect_orb_error
     } 
 
+
 def get_sword_label(
     data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
     *,
@@ -1285,6 +1281,124 @@ def get_sword_label(
         frac_tolerance=frac_tolerance,
         verbose=False,
     )["disorder_label"]
+
+def get_sword_info(
+    data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
+    *,
+    symprec: float = 1e-2,
+    angle_tolerance: float = 5.0,
+    occupancy_tolerance: float = 1.0,
+    site_tolerance: float = 1e-4,
+    occ_tolerance: float = 1.0,
+    vac_tolerance: float = 1e-2,
+    frac_tolerance: float = 1e-4,
+    conventional_struct: bool = True,
+    refine_struct: bool = False,
+) -> str:
+    if isinstance(data, Structure):
+        cif_txt = data.to(fmt="cif")
+    elif isinstance(data, str):
+        if os.path.isfile(data):
+            with open(data, "r", encoding="utf-8") as f:
+                cif_txt = f.read()
+        else:
+            cif_txt = data
+    else:
+        raise TypeError("data must be str (CIF text/path) or pymatgen.core.Structure")
+
+    entry = StructureEntry.from_txt(
+        cif_txt,
+        source="SWORD",
+        symprec=symprec,
+        angle_tolerance=angle_tolerance,
+        occupancy_tolerance=occupancy_tolerance,
+        conventional_struct=conventional_struct,
+        refine_struct=refine_struct,
+    )
+
+    return entry, disorder_label(
+        entry,
+        site_tolerance=site_tolerance,
+        occ_tolerance=occ_tolerance,
+        vac_tolerance=vac_tolerance,
+        frac_tolerance=frac_tolerance,
+        verbose=False,
+    )
+
+def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+    child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
+    elements = sorted([el.symbol for el in child.composition.elements])
+    mask_sets = [
+        comb
+        for k in range(2, len(elements) + 1)
+        for comb in combinations(elements, k)
+    ]
+
+    out = []
+    for mask in mask_sets:
+        masked = child.copy()
+        masked.replace_species({el: DummySpecie("X", 0) for el in mask})
+        label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
+
+        mix = "+".join(sorted(mask))
+        label = label.replace("X", f"{{{mix}}}")
+
+        rows = icsd_df[icsd_df["disorder_label"] == label]
+        out.append({
+            "child_label": child_label,
+            "parent_label": label,
+            "matched_labels": rows["disorder_label"].tolist(),
+            "id": rows["CollectionCode"].tolist(),
+        })
+    return out
+
+def get_sword_label_for_ICSD(
+    collection_code,
+    *,
+    ICSD_df,
+    site_tolerance: float = 1e-4,
+    occ_tolerance: float = 1.0,
+    vac_tolerance: float = 1e-2,
+    frac_tolerance: float = 1e-4,
+    meta=None,
+) -> str:
+    entry = StructureEntry.from_collection_code(
+        collection_code,
+        ICSD_df=ICSD_df,
+        meta=meta,
+    )
+    return disorder_label(
+        entry,
+        site_tolerance=site_tolerance,
+        occ_tolerance=occ_tolerance,
+        vac_tolerance=vac_tolerance,
+        frac_tolerance=frac_tolerance,
+        verbose=False,
+    )["disorder_label"]
+
+def get_sword_info_for_ICSD(
+    collection_code,
+    *,
+    ICSD_df,
+    site_tolerance: float = 1e-4,
+    occ_tolerance: float = 1.0,
+    vac_tolerance: float = 1e-2,
+    frac_tolerance: float = 1e-4,
+    meta=None,
+) -> str:
+    entry = StructureEntry.from_collection_code(
+        collection_code,
+        ICSD_df=ICSD_df,
+        meta=meta,
+    )
+    return entry, disorder_label(
+        entry,
+        site_tolerance=site_tolerance,
+        occ_tolerance=occ_tolerance,
+        vac_tolerance=vac_tolerance,
+        frac_tolerance=frac_tolerance,
+        verbose=False,
+    )
 
 def get_sword_label_from_pyxtal(pyxtal_dict):
     """
@@ -1345,140 +1459,9 @@ def get_sword_label_from_pyxtal(pyxtal_dict):
 
     # PyXtal-generated sequences have some canonicalization issues; bypassing for now (need to investigate further)
     wyckoff_set_std, element_seq, _ = get_canonical_wyckoff_sets(
-        sequence_map, mapping_by_sg, sg_num
+        sequence_map, 
+        #mapping_by_sg, 
+        sg_num
     )
     
     return f"{wyckoff_set_std}_{sg_num}_{element_seq}"
-
-def get_sword_info(
-    data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
-    *,
-    symprec: float = 1e-2,
-    angle_tolerance: float = 5.0,
-    occupancy_tolerance: float = 1.0,
-    site_tolerance: float = 1e-4,
-    occ_tolerance: float = 1.0,
-    vac_tolerance: float = 1e-2,
-    frac_tolerance: float = 1e-4,
-    conventional_struct: bool = True,
-    refine_struct: bool = False,
-) -> str:
-    if isinstance(data, Structure):
-        cif_txt = data.to(fmt="cif")
-    elif isinstance(data, str):
-        if os.path.isfile(data):
-            with open(data, "r", encoding="utf-8") as f:
-                cif_txt = f.read()
-        else:
-            cif_txt = data
-    else:
-        raise TypeError("data must be str (CIF text/path) or pymatgen.core.Structure")
-
-    entry = StructureEntry.from_txt(
-        cif_txt,
-        source="SWORD",
-        symprec=symprec,
-        angle_tolerance=angle_tolerance,
-        occupancy_tolerance=occupancy_tolerance,
-        conventional_struct=conventional_struct,
-        refine_struct=refine_struct,
-    )
-
-    return entry, disorder_label(
-        entry,
-        site_tolerance=site_tolerance,
-        occ_tolerance=occ_tolerance,
-        vac_tolerance=vac_tolerance,
-        frac_tolerance=frac_tolerance,
-        verbose=False,
-    )
-
-def find_parent_ICSD(child_data, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
-    
-    if isinstance(child_data, Structure):
-        child = child_data
-    else:
-        child = Structure.from_str(child_data, fmt="cif") if "\n" in str(child_data) \
-                else Structure.from_file(child_data)
-
-    child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
-    elements = sorted([el.symbol for el in child.composition.elements])
-    mask_sets = [
-        comb
-        for k in range(2, len(elements) + 1)
-        for comb in combinations(elements, k)
-    ]
-
-    all_parent_labels = []
-    all_matched_labels = []
-    all_matched_ids = []
-
-    for mask in mask_sets:
-        masked = child.copy()
-        masked.replace_species({el: DummySpecie("X", 0) for el in mask})
-        label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
-
-        mix = "+".join(sorted(mask))
-        label = label.replace("X", f"{{{mix}}}")
-        
-        all_parent_labels.append(label)
-
-        rows = icsd_df[icsd_df["disorder_label"] == label]
-        if not rows.empty:
-            all_matched_labels.extend(rows["disorder_label"].unique().tolist())
-            all_matched_ids.extend(rows["CollectionCode"].tolist())
-
-    return {
-        "child_label": child_label,
-        "parent_labels": all_parent_labels,
-        "matched_labels": list(set(all_matched_labels)), # Unique matched SWORD labels
-        "matched_ids": list(set(all_matched_ids))        # Unique matched IDs
-    }
-
-def get_sword_label_for_ICSD(
-    collection_code,
-    *,
-    ICSD_df,
-    site_tolerance: float = 1e-4,
-    occ_tolerance: float = 1.0,
-    vac_tolerance: float = 1e-2,
-    frac_tolerance: float = 1e-4,
-    meta=None,
-) -> str:
-    entry = StructureEntry.from_collection_code(
-        collection_code,
-        ICSD_df=ICSD_df,
-        meta=meta,
-    )
-    return disorder_label(
-        entry,
-        site_tolerance=site_tolerance,
-        occ_tolerance=occ_tolerance,
-        vac_tolerance=vac_tolerance,
-        frac_tolerance=frac_tolerance,
-        verbose=False,
-    )["disorder_label"]
-
-def get_sword_info_for_ICSD(
-    collection_code,
-    *,
-    ICSD_df,
-    site_tolerance: float = 1e-4,
-    occ_tolerance: float = 1.0,
-    vac_tolerance: float = 1e-2,
-    frac_tolerance: float = 1e-4,
-    meta=None,
-) -> str:
-    entry = StructureEntry.from_collection_code(
-        collection_code,
-        ICSD_df=ICSD_df,
-        meta=meta,
-    )
-    return entry, disorder_label(
-        entry,
-        site_tolerance=site_tolerance,
-        occ_tolerance=occ_tolerance,
-        vac_tolerance=vac_tolerance,
-        frac_tolerance=frac_tolerance,
-        verbose=False,
-    )
