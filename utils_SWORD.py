@@ -749,54 +749,200 @@ for sg in wyckoff_sets.index:
     mapping_by_sg[sg] = inner_map
 
 _KEY_PAT = re.compile(r"^([A-Za-z]+)(\d*)$")
-
 _SWORD_DIR = os.path.dirname(__file__)
-_HALL_WP_JSON = os.path.join(_SWORD_DIR, "sword_hall_wp_perms_by_sg.json")
 
-with open(_HALL_WP_JSON, "r") as f:
-    _raw_hall_wp = json.load(f)
+# ---- Hall-only table loader (once) ----
+_HALL_ONLY_JSON = os.path.join(_SWORD_DIR, "hall_letter_maps_by_sg.json")
+with open(_HALL_ONLY_JSON, "r") as f:
+    _HALL_ONLY_RAW = json.load(f)
 
-_SWORD_HALL_WP_PERMS = {
-    int(sg): tuple({str(k): str(v) for k, v in p.items()} for p in perms)
-    for sg, perms in _raw_hall_wp.items()
-}
-
-def _get_hall_wp_perms():
-    return _SWORD_HALL_WP_PERMS
-
-def get_canonical_wyckoff_sets(sequence_map, space_group_number):
+def _get_hall_maps_for_sg(sg_num):
     """
-    Pure canonicalization:
-    - get precomputed Hall+WP perms for SG
-    - apply each perm to sequence_map
-    - sort by (value, key)
-    - return lexicographically smallest (wyckoff_seq, element_seq, transformed_map)
+    Return {hall_no(str): perm_ref_to_hall(dict)} for one SG.
+    Supports:
+    1) old format: { "12": { "63": {...}, ... }, ... }
+    2) tagged format: { "by_sg": { "12": { "halls": { "63": {"perm_ref_to_hall": {...}}, ... }}}}
     """
-    if not (isinstance(sequence_map, dict) and sequence_map):
-        return "", "", {}
+    sg_key = str(int(sg_num))
 
-    sg = int(space_group_number)
-    perms = _get_hall_wp_perms()[sg]  # expected to exist for all SG after build
+    if "by_sg" in _HALL_ONLY_RAW:
+        block = _HALL_ONLY_RAW["by_sg"].get(sg_key, {})
+        halls = block.get("halls", {})
+        out = {}
+        for h, rec in halls.items():
+            perm = rec.get("perm_ref_to_hall", rec) if isinstance(rec, dict) else rec
+            out[str(h)] = {str(k): str(v) for k, v in perm.items()}
+        return out
+
+    block = _HALL_ONLY_RAW.get(sg_key, {})
+    return {str(h): {str(k): str(v) for k, v in p.items()} for h, p in block.items()}
+
+def _apply_letter_perm_to_sequence_map(sequence_map, letter_perm):
+    out = {}
+    for k, v in sequence_map.items():
+        m = _KEY_PAT.fullmatch(str(k).strip())
+        if not m:
+            raise ValueError(f"Invalid Wyckoff key format: {k!r}")
+        letter, suffix = m.group(1), (m.group(2) or "")
+        out[f"{letter_perm[letter]}{suffix}"] = v
+    return out
+
+def _hall_candidates_and_conventional(sequence_map, sg_num):
+    """
+    Return:
+      hall_candidates: list of dicts (for debug/inspection)
+      seq_map_conv: sequence_map mapped to selected Hall branch
+      conv_branch: selected candidate dict
+    """
+    hall_maps = _get_hall_maps_for_sg(sg_num)
+    if not hall_maps:
+        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return [], seq_sorted, {"hall_no": None, "wyck": "_".join(seq_sorted.keys()), "elem": "_".join(seq_sorted.values())}
+
+    cands = []
+    for hall_no, perm_ref_to_hall in sorted(hall_maps.items(), key=lambda kv: int(kv[0])):
+        # input assumed in hall_no; map back to reference/conventional with inverse
+        perm_hall_to_ref = {v: k for k, v in perm_ref_to_hall.items()}
+        transformed = _apply_letter_perm_to_sequence_map(sequence_map, perm_hall_to_ref)
+        transformed = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
+
+        cands.append({
+            "hall_no": int(hall_no),
+            "wyck": "_".join(transformed.keys()),
+            "elem": "_".join(transformed.values()),
+            "sequence_map_ref": transformed,
+        })
+
+    # dedup by (wyck, elem)
+    uniq = {}
+    for c in cands:
+        uniq.setdefault((c["wyck"], c["elem"]), c)
+    hall_candidates = list(uniq.values())
+
+    # choose Hall-stage lexicographic minimum, same tie-break style as WP canonicalization
+    conv_branch = min(hall_candidates, key=lambda x: (x["wyck"], x["elem"]))
+    return hall_candidates, conv_branch["sequence_map_ref"], conv_branch
+
+def _enumerate_wp_candidates_legacy(sequence_map, sg_num):
+    """
+    Legacy WP candidates from mapping_by_sg (same rule as old canonical).
+    """
+    wp_mappings = mapping_by_sg.get(sg_num, {})
+    if not wp_mappings:
+        t = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return [("_".join(t.keys()), "_".join(t.values()), t)]
+
+    base_no = min(wp_mappings)
+    base_idx_to_letter = wp_mappings[base_no]
+    base_letter_to_idx = {ch: idx for idx, ch in base_idx_to_letter.items()}
 
     candidates = []
-    for perm in perms:
+    for _, idx_to_letter in wp_mappings.items():
         transformed = {}
+        ok = True
         for k, v in sequence_map.items():
             m = _KEY_PAT.fullmatch(str(k).strip())
             if not m:
-                raise ValueError(f"Invalid Wyckoff key format: {k!r}")
-            letter, suffix = m.group(1), (m.group(2) or "")
-            transformed[f"{perm[letter]}{suffix}"] = v
+                ok = False
+                break
+            ch, suf = m.group(1), (m.group(2) or "")
+            idx = base_letter_to_idx.get(ch)
+            if idx is None or idx not in idx_to_letter:
+                ok = False
+                break
+            transformed[f"{idx_to_letter[idx]}{suf}"] = v
+        if not ok:
+            continue
 
         transformed = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
-        candidates.append((
-            "_".join(transformed.keys()),
-            "_".join(transformed.values()),
-            transformed,
-        ))
-        wyck_seq, elem_seq, seq_std = min(candidates, key=lambda t: (t[0], t[1]))
+        candidates.append(("_".join(transformed.keys()), "_".join(transformed.values()), transformed))
 
+    # unique + sorted
+    uniq = {}
+    for w, e, t in candidates:
+        uniq[(w, e)] = t
+    return [(w, e, uniq[(w, e)]) for (w, e) in sorted(uniq.keys())]
+
+def _canonicalize_sequence_map_with_hall(sequence_map, sg_num, return_trace=False):
+    """
+    Hall-stage normalization + legacy WP canonicalization.
+    Shared by CIF/native SWORD path and pyxtal_dict path.
+    """
+    hall_candidates, seq_map_conv, conv_branch = _hall_candidates_and_conventional(sequence_map, sg_num)
+
+    # legacy canonical (3 args)
+    wyckoff_set_std, element_seq, seq_std = get_canonical_wyckoff_sets(
+        seq_map_conv, mapping_by_sg, sg_num
+    )
+
+    if not return_trace:
+        return wyckoff_set_std, element_seq, seq_std
+
+    wp_candidates = _enumerate_wp_candidates_legacy(seq_map_conv, sg_num)
+    return wyckoff_set_std, element_seq, seq_std, {
+        "hall_candidates": hall_candidates,
+        "conventional_branch": conv_branch,
+        "wp_candidates_from_conventional": wp_candidates,
+    }
+
+# backward-compatible alias
+def _canonicalize_pyxtal_sequence_map(sequence_map, sg_num, return_trace=False):
+    return _canonicalize_sequence_map_with_hall(sequence_map, sg_num, return_trace=return_trace)
+
+def get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, space_group_number):
+    """
+    Canonicalize (wyckoff_part -> elem_part) by enumerating all Transformed WP mappings,
+    re-sorting each transformed map by (value, key), and taking lexicographically minimal
+    (wyckoff_seq, element_seq).
+    """
+    wp_mappings = mapping_by_sg.get(space_group_number, {})
+    # fallback: no mapping table
+    if not wp_mappings:
+        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return "_".join(seq_sorted.keys()), "_".join(seq_sorted.values()), seq_sorted
+
+    base_no = min(wp_mappings)
+    base_idx_to_letter = wp_mappings[base_no]
+    base_letter_to_idx = {ch: idx for idx, ch in base_idx_to_letter.items()}
+
+    def transform_key(k, idx_to_letter):
+        m = re.fullmatch(r"([A-Za-z]+)(\d*)", k)
+        if not m:
+            return None
+        ch, suf = m.group(1), m.group(2) or ""
+        idx = base_letter_to_idx.get(ch)
+        if idx is None:
+            return None
+        new_ch = idx_to_letter.get(idx)
+        if new_ch is None:
+            return None
+        return f"{new_ch}{suf}"
+
+    candidates = []
+    for _, idx_to_letter in wp_mappings.items():
+        transformed = {}
+        ok = True
+        for k, v in sequence_map.items():
+            nk = transform_key(k, idx_to_letter)
+            if nk is None:
+                ok = False
+                break
+            transformed[nk] = v
+        if not ok:
+            continue
+
+        transformed_sorted = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
+        wyck_seq = "_".join(transformed_sorted.keys())
+        elem_seq = "_".join(transformed_sorted.values())
+        candidates.append((wyck_seq, elem_seq, transformed_sorted))
+
+    if not candidates:
+        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return "_".join(seq_sorted.keys()), "_".join(seq_sorted.values()), seq_sorted
+
+    wyck_seq, elem_seq, seq_std = min(candidates, key=lambda t: (t[0], t[1]))
     return wyck_seq, elem_seq, seq_std
+
 
 def mean_site_radius(species_list):
     """
@@ -1192,8 +1338,8 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
     #=========================section 4: get canonical wyckoff sequence=======================  
     #wyckoff_set_std = get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, entry.spg_num)
     #disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"      
-    wyckoff_set_std, element_seq, sequence_map_std = get_canonical_wyckoff_sets(
-    sequence_map, entry.spg_num
+    wyckoff_set_std, element_seq, sequence_map_std = _canonicalize_sequence_map_with_hall(
+        sequence_map, entry.spg_num
     )
     disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"
 
@@ -1458,10 +1604,7 @@ def get_sword_label_from_pyxtal(pyxtal_dict):
         sequence_map[wyck_key] = elem_val
 
     # PyXtal-generated sequences have some canonicalization issues; bypassing for now (need to investigate further)
-    wyckoff_set_std, element_seq, _ = get_canonical_wyckoff_sets(
-        sequence_map, 
-        #mapping_by_sg, 
-        sg_num
+    wyckoff_set_std, element_seq, _ = _canonicalize_sequence_map_with_hall(
+        sequence_map, sg_num, return_trace=False
     )
-    
     return f"{wyckoff_set_std}_{sg_num}_{element_seq}"
