@@ -453,6 +453,7 @@ def _select_consistent_symmetry_interpretation(
     occupancy_tolerance=1.0,
     conventional_struct=True,
     refine_struct=False,
+    symprec_scan=False,
     decision_max_symprec=_MAX_SCAN_SYMPREC,
 ):
     """
@@ -460,9 +461,11 @@ def _select_consistent_symmetry_interpretation(
 
     Candidate generation:
     - Start from `find_symprec(...)`, which gives a raw-structure analyzer near the CIF SG.
-    - Automatically generate scanned factors 1, 2, 5, 10, 20, 50, ... until
-      `factor * base_symprec` reaches `decision_max_symprec`, then build two
-      candidates at each scanned symprec:
+    - Default mode (`symprec_scan=False`): use the conventional cell at the user-given
+      symprec directly, with no extra scanning.
+    - Scan mode (`symprec_scan=True`): automatically generate scanned factors 1, 2, 5,
+      10, 20, 50, ... until `factor * base_symprec` reaches `decision_max_symprec`,
+      then build two candidates at each scanned symprec:
       1) `raw`: analyze the parsed raw structure directly.
       2) `conv`: conventionalize first, then analyze the conventional structure.
 
@@ -471,9 +474,11 @@ def _select_consistent_symmetry_interpretation(
       Caller explicitly requested refined structure; bypass raw/conv competition.
     - `raw_only`:
       Caller disabled conventionalization (`conventional_struct=False`); keep raw path.
+    - `base_conv`:
+      Default no-scan mode. Use the conventional cell directly at the chosen symprec.
     - `base_consistent_conv`:
-      At the initial symprec from `find_symprec`, raw SG == conv SG and that SG is not
-      P1, so use conv directly.
+      In scan mode, the initial symprec already gives the same SG before and after
+      conventionalization, so use conv directly.
     - `stable_repeated_non_p1_conv`:
       Scanning produced one or more conv-space groups that are both non-P1 and repeated
       across multiple scanned symprecs. Choose the best such conv family first.
@@ -529,11 +534,24 @@ def _select_consistent_symmetry_interpretation(
             "scan_pairs": [],
         }
 
-    # Fast path: if the initial symprec already gives the same SG before and after
-    # conventionalization, directly use the conventional candidate at this symprec.
-    # Base symprec values below 1e-2 are still forced to continue scanning, even if
-    # before/after already agree.
+    # Default mode: use the conventional cell directly at the chosen symprec, with no
+    # extra multi-symprec search.
     base_conv = _build_symmetry_choice(raw_struct, base_sp, angle_tolerance, True)
+    if not symprec_scan:
+        return {
+            "symprec_used": base_sp,
+            "used_conventional": True,
+            "is_merge": is_merge,
+            "struct": base_conv["struct"],
+            "sga": base_conv["sga"],
+            "sg_before": raw_sga.get_space_group_number(),
+            "sg_after": base_conv["sg_num"],
+            "selection_reason": "base_conv",
+            "scan_pairs": [],
+        }
+
+    # Scan mode fast path: if the initial symprec already gives the same SG before and
+    # after conventionalization, directly use the conventional candidate at this symprec.
     if raw_sga.get_space_group_number() == base_conv["sg_num"] and base_sp >= 1e-2:
         return {
             "symprec_used": base_sp,
@@ -547,7 +565,7 @@ def _select_consistent_symmetry_interpretation(
             "scan_pairs": [],
         }
 
-    # Slow path: scan additional symprecs up to the configured maximum cutoff and
+    # Scan mode: scan additional symprecs up to the configured maximum cutoff and
     # compare raw/conv candidates.
     factors = _build_scan_factors(base_sp, decision_max_symprec)
     pairs = []
@@ -884,6 +902,7 @@ class StructureEntry:
         source: str = 'None',
         conventional_struct: bool = True,
         refine_struct: bool = False,
+        symprec_scan: bool = False,
         decision_max_symprec=_MAX_SCAN_SYMPREC,
     ):
         # construct a symmetrized CIF txt from raw CIF or POSCAR using a pre-selected symmetry interpretation
@@ -895,6 +914,7 @@ class StructureEntry:
                 occupancy_tolerance=occupancy_tolerance,
                 conventional_struct=conventional_struct,
                 refine_struct=refine_struct,
+                symprec_scan=symprec_scan,
                 decision_max_symprec=decision_max_symprec,
             )
         except Exception as e:
@@ -1755,6 +1775,7 @@ def get_sword_label(
     frac_tolerance: float = 1e-4,
     conventional_struct: bool = True,
     refine_struct: bool = False,
+    symprec_scan: bool = False,
     decision_max_symprec=_MAX_SCAN_SYMPREC,
 ) -> str:
     if isinstance(data, Structure):
@@ -1775,6 +1796,7 @@ def get_sword_label(
         occupancy_tolerance=occupancy_tolerance,
         conventional_struct=conventional_struct,
         refine_struct=refine_struct,
+        symprec_scan=symprec_scan,
         decision_max_symprec=decision_max_symprec,
     )
     if occ_tolerance is None:
@@ -1801,6 +1823,7 @@ def get_sword_info(
     frac_tolerance: float = 1e-4,
     conventional_struct: bool = True,
     refine_struct: bool = False,
+    symprec_scan: bool = False,
     decision_max_symprec=_MAX_SCAN_SYMPREC,
 ) -> str:
     if isinstance(data, Structure):
@@ -1822,6 +1845,7 @@ def get_sword_info(
         occupancy_tolerance=occupancy_tolerance,
         conventional_struct=conventional_struct,
         refine_struct=refine_struct,
+        symprec_scan=symprec_scan,
         decision_max_symprec=decision_max_symprec,
     )
     if occ_tolerance is None:
