@@ -529,17 +529,12 @@ def _select_consistent_symmetry_interpretation(
             "scan_pairs": [],
         }
 
-    # Fast path: if the initial symprec already gives the same non-P1 SG before and
-    # after conventionalization, directly use the conventional candidate at this symprec.
-    # P1 is intentionally excluded from this early return, and base symprec values below
-    # 1e-2 are also forced to continue scanning so low-tolerance low-symmetry matches do
-    # not stop the search too early.
+    # Fast path: if the initial symprec already gives the same SG before and after
+    # conventionalization, directly use the conventional candidate at this symprec.
+    # Base symprec values below 1e-2 are still forced to continue scanning, even if
+    # before/after already agree.
     base_conv = _build_symmetry_choice(raw_struct, base_sp, angle_tolerance, True)
-    if (
-        raw_sga.get_space_group_number() == base_conv["sg_num"]
-        and base_conv["sg_num"] != 1
-        and base_sp >= 1e-2
-    ):
+    if raw_sga.get_space_group_number() == base_conv["sg_num"] and base_sp >= 1e-2:
         return {
             "symprec_used": base_sp,
             "used_conventional": True,
