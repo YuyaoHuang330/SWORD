@@ -5,7 +5,9 @@ import re
 import numpy as np
 import pandas as pd
 import json
+import sys
 import itertools
+import subprocess
 from typing import Any
 from typing import Union
 from io import StringIO
@@ -21,11 +23,10 @@ from itertools import combinations_with_replacement
 
 from itertools import combinations
 from pymatgen.core.periodic_table import DummySpecie
-#from material_hasher.hasher import HASHERS
-
 
 radius_df = pd.read_csv('/home/users/yyhuang/ICSD/deduplicate/all_radii.csv')
 wyckoff_sets = pd.read_json('/home/users/yyhuang/ICSD/deduplicate/wyckoff_sets.json')
+_MAX_SCAN_SYMPREC = 1e-1
 
 class CifWriter:
     """A customized Pymatgen CIFwrapper to write symmetrized CIF files with wyckoff letter from CIF raw txt."""
@@ -330,80 +331,406 @@ def is_symmetrized_CIF(raw_txt, sym_txt):
 
     return True
 
+
+
 def find_symprec(raw_txt, *, n=2, symprec=1e-2, angle_tolerance=5.0, occupancy_tolerance:float = 1.0, merge_tolerance:float = 0.01):
     """
-    Find symprec that yields a valid symmetry analysis matching the CIF space group. Cleanup of too closed sites below tolerance.
+    Find a starting symprec whose raw-structure symmetry analysis best matches the CIF SG.
+    Returns the *raw* parsed structure together with the chosen raw-spacegroup analyzer.
+    The returned struct is not standardized/refined; downstream code must decide that explicitly.
     """
-    # retrieve target space group from CIF
-    m = re.search(r"_(?:space_group_IT_number|symmetry_Int_Tables_number)\s+['\"]?(\S+?)['\"]?(?:\s|$)", raw_txt, re.IGNORECASE)
+    m = re.search(r"""_(?:space_group_IT_number|symmetry_Int_Tables_number)\s+['"]?(\S+?)['"]?(?:\s|$)""", raw_txt, re.IGNORECASE)
     if not m:
         raise ValueError("No _space_group_IT_number found in CIF text.")
     target_sg = int(m.group(1))
 
-    #merge_triggers = ("Incorrect stoichiometry",)
-    #with warnings.catch_warnings(record=True) as warn_list:
-    #        warnings.simplefilter("always")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        base_structure = CifParser(StringIO(raw_txt), occupancy_tolerance = occupancy_tolerance).parse_structures(primitive=False)[0]
-
-    merged_base = False
-    # for w in warn_list:
-    #     if any(k in str(w.message) for k in merge_triggers):
-    #         warnings.warn((f"[Warning Triggered] {w.message}"))
-    #         base_structure = base_structure.merge_sites(mode="delete", tol = merge_tolerance)
-    #         merged_base = True
-    #         break
+        raw_struct = CifParser(StringIO(raw_txt), occupancy_tolerance=occupancy_tolerance).parse_structures(primitive=False)[0]
 
     candidates = [symprec]
     for i in range(1, n + 1):
         candidates.append(symprec / (10**i))
         candidates.append(symprec * (10**i))
-        
+
     parsed_ok = False
     best_diff = None
-    best_match = None # (sp, merged, struct, sga, sgnum)
+    best_match = None
     for sp in candidates:
-        struct = base_structure.copy()
-        merged = merged_base  # initial state
-
+        struct = raw_struct.copy()
+        merged = False
         try:
             sga = SpacegroupAnalyzer(struct, symprec=sp, angle_tolerance=angle_tolerance)
             sgnum = sga.get_space_group_number()
             parsed_ok = True
             if target_sg == 1 or int(sgnum) == target_sg:
                 return sp, merged, struct, sga
-            
-            if parsed_ok and sgnum is not None: #actually this condition is unnecessary
-                diff = abs(int(sgnum) - target_sg)
-
+            diff = abs(int(sgnum) - target_sg)
             if best_diff is None or diff < best_diff:
                 best_diff = diff
                 best_match = (sp, merged, struct, sga, sgnum)
         except Exception:
-            sgnum = None  # fall through to merge retry
-        
-        # if not merged:
-        #     # retry after merging close sites
-        #     struct = struct.merge_sites(mode="delete", tol = merge_tolerance) 
-        #     merged = True
-        #     try:
-        #         sga = SpacegroupAnalyzer(struct, symprec=sp, angle_tolerance=angle_tolerance)
-        #         sgnum = sga.get_space_group_number()
-        #         parsed_ok = True
-        #         if target_sg == "1" or str(sgnum) == target_sg:
-        #             return sp, merged, struct, sga
-        #     except Exception:
-        #         continue
+            continue
 
     if not parsed_ok:
         raise RuntimeError(f"No symprec setting allowed SpacegroupAnalyzer to parse the structure within {2 * (1 + 2*n)} attempts.")
     if best_match is not None:
         sp_best, merged, struct, sga, sgnum_best = best_match
-        warnings.warn(f"No symprec setting could reproduced the original space group {target_sg} within {2 * (1 + 2*n)} iterations;"
-                      f"returning closest match {sgnum_best} at symprec={sp_best}.")
+        warnings.warn(
+            f"No symprec setting could reproduced the original space group {target_sg} within {2 * (1 + 2*n)} iterations;"
+            f"returning closest raw match {sgnum_best} at symprec={sp_best}."
+        )
         return sp_best, merged, struct, sga
-    
+
+
+def _symmetry_rank(sga):
+    try:
+        return len(sga.get_point_group_operations())
+    except Exception:
+        return -1
+
+def _build_scan_factors(base_symprec, max_symprec):
+    """
+    Generate multiplicative scan factors 1, 2, 5, 10, 20, 50, ... so that
+    factor * base_symprec <= max_symprec. The base factor 1.0 is always included.
+    """
+    if base_symprec <= 0:
+        return [1.0]
+    if max_symprec is None or max_symprec <= 0:
+        return [1.0]
+
+    factors = [1.0]
+    if base_symprec >= max_symprec:
+        return factors
+
+    decade = 1.0
+    while True:
+        added = False
+        for mult in (2.0, 5.0, 10.0):
+            factor = decade * mult
+            if base_symprec * factor <= max_symprec + 1e-15:
+                factors.append(float(factor))
+                added = True
+        if base_symprec * (decade * 10.0) > max_symprec + 1e-15:
+            break
+        decade *= 10.0
+        if not added and base_symprec * decade > max_symprec + 1e-15:
+            break
+
+    return sorted(set(factors))
+
+
+def _build_symmetry_choice(raw_struct, sp, angle_tolerance, use_conventional):
+    raw_sga = SpacegroupAnalyzer(raw_struct, symprec=sp, angle_tolerance=angle_tolerance)
+    raw_num = raw_sga.get_space_group_number()
+    raw_sym = raw_sga.get_space_group_symbol()
+
+    if use_conventional:
+        chosen_struct = raw_sga.get_conventional_standard_structure()
+        chosen_sga = SpacegroupAnalyzer(chosen_struct, symprec=sp, angle_tolerance=angle_tolerance)
+    else:
+        chosen_struct = raw_struct.copy()
+        chosen_sga = raw_sga
+
+    return {
+        "mode": "conv" if use_conventional else "raw",
+        "symprec": sp,
+        "raw_sg_num": raw_num,
+        "raw_sg_symbol": raw_sym,
+        "sg_num": chosen_sga.get_space_group_number(),
+        "sg_symbol": chosen_sga.get_space_group_symbol(),
+        "rank": _symmetry_rank(chosen_sga),
+        "struct": chosen_struct,
+        "sga": chosen_sga,
+    }
+
+
+def _select_consistent_symmetry_interpretation(
+    raw_txt,
+    *,
+    symprec=1e-2,
+    angle_tolerance=5.0,
+    occupancy_tolerance=1.0,
+    conventional_struct=True,
+    refine_struct=False,
+    symprec_scan=False,
+    decision_max_symprec=_MAX_SCAN_SYMPREC,
+):
+    """
+    Choose one symmetry interpretation to be used consistently downstream.
+
+    Candidate generation:
+    - Start from `find_symprec(...)`, which gives a raw-structure analyzer near the CIF SG.
+    - Default mode (`symprec_scan=False`): use the conventional cell at the user-given
+      symprec directly, with no extra scanning.
+    - Scan mode (`symprec_scan=True`): automatically generate scanned factors 1, 2, 5,
+      10, 20, 50, ... until `factor * base_symprec` reaches `decision_max_symprec`,
+      then build two candidates at each scanned symprec:
+      1) `raw`: analyze the parsed raw structure directly.
+      2) `conv`: conventionalize first, then analyze the conventional structure.
+
+    Returned `selection_reason` values:
+    - `refine_struct`:
+      Caller explicitly requested refined structure; bypass raw/conv competition.
+    - `raw_only`:
+      Caller disabled conventionalization (`conventional_struct=False`); keep raw path.
+    - `base_conv`:
+      Default no-scan mode. Use the conventional cell directly at the chosen symprec.
+    - `base_consistent_conv`:
+      In scan mode, the initial symprec already gives the same SG before and after
+      conventionalization, so use conv directly.
+    - `stable_repeated_non_p1_conv`:
+      Scanning produced one or more conv-space groups that are both non-P1 and repeated
+      across multiple scanned symprecs. Choose the best such conv family first.
+    - `consistent_conv_candidate`:
+      No repeated non-P1 conv family won outright, but scanning produced one or more
+      factors where raw SG == conv SG. Among those consistent factors, choose the conv
+      candidate that is best ranked by the fallback ordering.
+    - `stable_conv_fallback`:
+      No repeated non-P1 conv family and no raw==conv factor was decisive. Fall back to
+      the best-ranked conv candidate across the scanned factors.
+    - `stable_highsym_raw_fallback`:
+      Special safeguard. If raw and conv are both systemically stable across *all*
+      scanned factors, but the raw candidate has a strictly higher point-group order
+      than the conv candidate, prefer raw instead of the stable conv fallback.
+    """
+    base_sp, is_merge, raw_struct, raw_sga = find_symprec(
+        raw_txt,
+        n=2,
+        symprec=symprec,
+        angle_tolerance=angle_tolerance,
+        occupancy_tolerance=occupancy_tolerance,
+    )
+
+    # Explicit refined-structure mode: skip the raw/conv decision tree and use the
+    # refined representation as the final interpretation.
+    if refine_struct:
+        refined = raw_sga.get_refined_structure()
+        refined_sga = SpacegroupAnalyzer(refined, symprec=base_sp, angle_tolerance=angle_tolerance)
+        return {
+            "symprec_used": base_sp,
+            "used_conventional": False,
+            "is_merge": is_merge,
+            "struct": refined,
+            "sga": refined_sga,
+            "sg_before": raw_sga.get_space_group_number(),
+            "sg_after": refined_sga.get_space_group_number(),
+            "selection_reason": "refine_struct",
+            "scan_pairs": [],
+        }
+
+    # Raw-only mode requested by caller: keep the raw analyzer/structure and record
+    # that no conventionalization was used.
+    if not conventional_struct:
+        return {
+            "symprec_used": base_sp,
+            "used_conventional": False,
+            "is_merge": is_merge,
+            "struct": raw_struct,
+            "sga": raw_sga,
+            "sg_before": raw_sga.get_space_group_number(),
+            "sg_after": raw_sga.get_space_group_number(),
+            "selection_reason": "raw_only",
+            "scan_pairs": [],
+        }
+
+    # Default mode: use the conventional cell directly at the chosen symprec, with no
+    # extra multi-symprec search.
+    base_conv = _build_symmetry_choice(raw_struct, base_sp, angle_tolerance, True)
+    if not symprec_scan:
+        return {
+            "symprec_used": base_sp,
+            "used_conventional": True,
+            "is_merge": is_merge,
+            "struct": base_conv["struct"],
+            "sga": base_conv["sga"],
+            "sg_before": raw_sga.get_space_group_number(),
+            "sg_after": base_conv["sg_num"],
+            "selection_reason": "base_conv",
+            "scan_pairs": [],
+        }
+
+    # Scan mode fast path: if the initial symprec already gives the same SG before and
+    # after conventionalization, directly use the conventional candidate at this symprec.
+    if raw_sga.get_space_group_number() == base_conv["sg_num"] and base_sp >= 1e-2:
+        return {
+            "symprec_used": base_sp,
+            "used_conventional": True,
+            "is_merge": is_merge,
+            "struct": base_conv["struct"],
+            "sga": base_conv["sga"],
+            "sg_before": raw_sga.get_space_group_number(),
+            "sg_after": base_conv["sg_num"],
+            "selection_reason": "base_consistent_conv",
+            "scan_pairs": [],
+        }
+
+    # Scan mode: scan additional symprecs up to the configured maximum cutoff and
+    # compare raw/conv candidates.
+    factors = _build_scan_factors(base_sp, decision_max_symprec)
+    pairs = []
+    raw_counts = Counter()
+    conv_counts = Counter()
+
+    for factor in factors:
+        sp = base_sp * factor
+        raw_choice = _build_symmetry_choice(raw_struct, sp, angle_tolerance, False)
+        conv_choice = _build_symmetry_choice(raw_struct, sp, angle_tolerance, True)
+        raw_key = (raw_choice["sg_num"], raw_choice["sg_symbol"], raw_choice["rank"])
+        conv_key = (conv_choice["sg_num"], conv_choice["sg_symbol"], conv_choice["rank"])
+        raw_counts[raw_key] += 1
+        conv_counts[conv_key] += 1
+        pairs.append({
+            "factor": factor,
+            "raw": raw_choice,
+            "conv": conv_choice,
+            "before_after_equal": raw_choice["sg_num"] == conv_choice["sg_num"],
+        })
+
+    # First priority after the fast path: prefer a conv-space-group family that is both
+    # non-P1 and repeated across multiple scanned symprecs. Here, "stable" means that the
+    # same conv SG appears more than once in the scanned-factor grid.
+    repeated_non_p1_conv = [
+        p["conv"]
+        for p in pairs
+        if p["conv"]["sg_num"] != 1
+        and conv_counts[(p["conv"]["sg_num"], p["conv"]["sg_symbol"], p["conv"]["rank"])] > 1
+    ]
+    if repeated_non_p1_conv:
+        chosen = min(
+            repeated_non_p1_conv,
+            key=lambda c: (
+                -conv_counts[(c["sg_num"], c["sg_symbol"], c["rank"])],
+                -c["rank"],
+                c["symprec"],
+                -c["sg_num"],
+            ),
+        )
+
+        raw_best_for_override = min(
+            [p["raw"] for p in pairs],
+            key=lambda c: (
+                c["sg_num"] == 1,
+                -raw_counts[(c["sg_num"], c["sg_symbol"], c["rank"])],
+                c["symprec"],
+                -c["rank"],
+                -c["sg_num"],
+            ),
+        )
+        raw_override_key = (raw_best_for_override["sg_num"], raw_best_for_override["sg_symbol"], raw_best_for_override["rank"])
+        chosen_conv_key = (chosen["sg_num"], chosen["sg_symbol"], chosen["rank"])
+        if (
+            raw_counts[raw_override_key] == len(pairs)
+            and conv_counts[chosen_conv_key] == len(pairs)
+            and raw_best_for_override["rank"] > chosen["rank"]
+            and raw_best_for_override["sg_num"] != chosen["sg_num"]
+        ):
+            return {
+                "symprec_used": raw_best_for_override["symprec"],
+                "used_conventional": False,
+                "is_merge": is_merge,
+                "struct": raw_best_for_override["struct"],
+                "sga": raw_best_for_override["sga"],
+                "sg_before": raw_best_for_override["raw_sg_num"],
+                "sg_after": raw_best_for_override["sg_num"],
+                "selection_reason": "stable_highsym_raw_fallback",
+                "scan_pairs": pairs,
+            }
+
+        return {
+            "symprec_used": chosen["symprec"],
+            "used_conventional": True,
+            "is_merge": is_merge,
+            "struct": chosen["struct"],
+            "sga": chosen["sga"],
+            "sg_before": chosen["raw_sg_num"],
+            "sg_after": chosen["sg_num"],
+            "selection_reason": "stable_repeated_non_p1_conv",
+            "scan_pairs": pairs,
+        }
+
+    # Second priority: among all scanned factors, look for cases where the raw and
+    # conventional analyses agree on the SG. If such consistent factors exist, keep the
+    # conventional candidate from the best-scoring consistent factor.
+    consistent_conv = [p for p in pairs if p["before_after_equal"]]
+    if consistent_conv:
+        best_pair = min(
+            consistent_conv,
+            key=lambda p: (
+                p["conv"]["sg_num"] == 1,
+                p["factor"],
+                -p["conv"]["rank"],
+                -p["conv"]["sg_num"],
+            ),
+        )
+        chosen = best_pair["conv"]
+        return {
+            "symprec_used": chosen["symprec"],
+            "used_conventional": True,
+            "is_merge": is_merge,
+            "struct": chosen["struct"],
+            "sga": chosen["sga"],
+            "sg_before": best_pair["raw"]["sg_num"],
+            "sg_after": chosen["sg_num"],
+            "selection_reason": "consistent_conv_candidate",
+            "scan_pairs": pairs,
+        }
+
+    # No repeated non-P1 conv family won, and no raw==conv factor was available.
+    # Rank the stable raw and stable conv families independently so we can either fall
+    # back to conv or trigger the raw safeguard.
+    conv_best = min(
+        [p["conv"] for p in pairs],
+        key=lambda c: (
+            c["sg_num"] == 1,
+            -conv_counts[(c["sg_num"], c["sg_symbol"], c["rank"])],
+            c["symprec"],
+            -c["rank"],
+            -c["sg_num"],
+        ),
+    )
+    raw_best = min(
+        [p["raw"] for p in pairs],
+        key=lambda c: (
+            -raw_counts[(c["sg_num"], c["sg_symbol"], c["rank"])],
+            c["symprec"],
+            -c["rank"],
+            -c["sg_num"],
+        ),
+    )
+
+    conv_key = (conv_best["sg_num"], conv_best["sg_symbol"], conv_best["rank"])
+    raw_key = (raw_best["sg_num"], raw_best["sg_symbol"], raw_best["rank"])
+    # Safeguard: only override the stable conv fallback if BOTH raw and conv are
+    # perfectly stable across the full scan, but raw still carries a higher point-group
+    # order than conv. This is meant for cases like 27664 where conventionalization can
+    # lock onto a lower-symmetry interpretation systematically.
+    if (
+        raw_counts[raw_key] == len(pairs)
+        and conv_counts[conv_key] == len(pairs)
+        and raw_best["rank"] > conv_best["rank"]
+        and raw_best["sg_num"] != conv_best["sg_num"]
+    ):
+        chosen = raw_best
+        used_conventional = False
+        reason = "stable_highsym_raw_fallback"
+    else:
+        chosen = conv_best
+        used_conventional = True
+        reason = "stable_conv_fallback"
+
+    return {
+        "symprec_used": chosen["symprec"],
+        "used_conventional": used_conventional,
+        "is_merge": is_merge,
+        "struct": chosen["struct"],
+        "sga": chosen["sga"],
+        "sg_before": chosen["raw_sg_num"],
+        "sg_after": chosen["sg_num"],
+        "selection_reason": reason,
+        "scan_pairs": pairs,
+    }
+
 def clean_num(token):
     if token is None:
         return None
@@ -561,21 +888,66 @@ class StructureEntry:
         self.records = sorted(self.records, key=lambda x: x["label"])
         self.df = pd.DataFrame(self.records)
 
+
     @classmethod
-    def from_txt(cls, raw_txt, *, code = None, meta=None, symprec=1e-2, angle_tolerance=5, occupancy_tolerance: float = 1.0, source: str = 'None', conventional_struct: bool = True, refine_struct: bool = False):
-        #construct a ICSD-style symmetrized CIF_txt from raw CIF or POSCAR
-        try: # find_symprec need to be  modified to adjust POSCAR
-            symprec, is_merge, struct, sga = find_symprec(raw_txt, n = 2, symprec=symprec, angle_tolerance=5, occupancy_tolerance = occupancy_tolerance)
+    def from_txt(
+        cls,
+        raw_txt,
+        *,
+        code = None,
+        meta=None,
+        symprec=1e-2,
+        angle_tolerance=5,
+        occupancy_tolerance: float = 1.0,
+        source: str = 'None',
+        conventional_struct: bool = True,
+        refine_struct: bool = False,
+        symprec_scan: bool = False,
+        decision_max_symprec=_MAX_SCAN_SYMPREC,
+    ):
+        # construct a symmetrized CIF txt from raw CIF or POSCAR using a pre-selected symmetry interpretation
+        try:
+            decision = _select_consistent_symmetry_interpretation(
+                raw_txt,
+                symprec=symprec,
+                angle_tolerance=angle_tolerance,
+                occupancy_tolerance=occupancy_tolerance,
+                conventional_struct=conventional_struct,
+                refine_struct=refine_struct,
+                symprec_scan=symprec_scan,
+                decision_max_symprec=decision_max_symprec,
+            )
         except Exception as e:
             warnings.warn(
-                f"[StructureEntry.from_txt] find_symprec failed: falling back to use default symprec."
-                f"symprec={symprec}, angle_tol={angle_tolerance}. "
-                f"Error: {e}")
-            symprec, is_merge, struct, sga = symprec, False, None, None
-        sym_txt = str(CifWriter(raw_txt, symprec=symprec, angle_tolerance=angle_tolerance, occupancy_tolerance=occupancy_tolerance, struct=struct, spg_analyzer=sga, conventional_struct=conventional_struct, refine_struct=refine_struct)._cf)
-        # Check completeness of input to determine whether to parse raw or symmetrized file
-        #use_sym = not is_symmetrized_CIF(raw_txt, sym_txt)
-        #chosed_txt = sym_txt if use_sym else raw_txt  
+                f"[StructureEntry.from_txt] symmetry selection failed: falling back to default raw analyzer. "
+                f"symprec={symprec}, angle_tol={angle_tolerance}. Error: {e}"
+            )
+            fallback_struct = CifParser(StringIO(raw_txt), occupancy_tolerance=occupancy_tolerance).parse_structures(primitive=False)[0]
+            fallback_sga = SpacegroupAnalyzer(fallback_struct, symprec=symprec, angle_tolerance=angle_tolerance)
+            decision = {
+                "symprec_used": symprec,
+                "used_conventional": False,
+                "is_merge": False,
+                "struct": fallback_struct,
+                "sga": fallback_sga,
+                "sg_before": fallback_sga.get_space_group_number(),
+                "sg_after": fallback_sga.get_space_group_number(),
+                "selection_reason": "fallback_raw",
+                "scan_pairs": [],
+            }
+
+        sym_txt = str(
+            CifWriter(
+                raw_txt,
+                symprec=decision["symprec_used"],
+                angle_tolerance=angle_tolerance,
+                occupancy_tolerance=occupancy_tolerance,
+                struct=decision["struct"],
+                spg_analyzer=decision["sga"],
+                conventional_struct=False,
+                refine_struct=False,
+            )._cf
+        )
         chosed_txt = sym_txt
         parser = CifParser(StringIO(chosed_txt))
         cif_dict = parser.as_dict()
@@ -586,10 +958,15 @@ class StructureEntry:
 
         entry = cls.__new__(cls)
         entry.CollectionCode = code
-        entry.is_merge = is_merge
-        #entry.read_by = "pmg" if use_sym else "raw"
+        entry.is_merge = decision["is_merge"]
         entry.read_by = "pmg"
         entry.source = source
+        entry.symprec_used = float(decision["symprec_used"])
+        entry.used_conventional = bool(decision["used_conventional"])
+        entry.sg_before = int(decision["sg_before"])
+        entry.sg_after = int(decision["sg_after"])
+        entry.selection_reason = decision["selection_reason"]
+        entry.scan_pairs = decision["scan_pairs"]
         entry._apply_payload(payload, meta)
         return entry
 
@@ -600,59 +977,59 @@ class StructureEntry:
         if meta == "all":
             meta = row.to_dict()
         return cls(cif_text, meta=meta, collection_code=collection_code)
-    
+
 def periodic_dist(a: np.ndarray, b: np.ndarray) -> float:
     diff = a - b
     diff_pbc = diff - np.round(diff)
     return np.linalg.norm(diff_pbc)
 
 def get_equiv_positions(point, sym_ops, frac_tolerance=1e-4):
-    """Computes the set of unique equivalent positions for a given fractional coordinate 
-    using a list of symmetry operations {sym_ops} from CIF. The generated raw positions 
-    will be clustered when periodic Euclidean distance tolerance <= frac_tolerance and 
-    floating-error derived duplicated positions will be deduplicated.
-    returning the coordinates as a sorted tuple."""
-    p0 = np.asarray(point, dtype=float) % 1.0
-    orb_raw = []
-    for op in sym_ops:
-        if hasattr(op, "operate"):
-            p = op.operate(p0)
-        else:
-            p = op(p0)
-        orb_raw.append(p % 1.0) 
-    # display(orb_raw)
+        """Computes the set of unique equivalent positions for a given fractional coordinate 
+        using a list of symmetry operations {sym_ops} from CIF. The generated raw positions 
+        will be clustered when periodic Euclidean distance tolerance <= frac_tolerance and 
+        floating-error derived duplicated positions will be deduplicated.
+        returning the coordinates as a sorted tuple."""
+        p0 = np.asarray(point, dtype=float) % 1.0
+        orb_raw = []
+        for op in sym_ops:
+            if hasattr(op, "operate"):
+                p = op.operate(p0)
+            else:
+                p = op(p0)
+            orb_raw.append(p % 1.0) 
+        # display(orb_raw)
 
-    clusters = [] 
-    for p_new in orb_raw:
-        found = False
-        for rep, points_in_cluster in clusters:
-            #print(f"p_new{p_new}, rep: {rep}, distance:{periodic_dist(p_new, rep)}")
-            if periodic_dist(p_new, rep) <= frac_tolerance*2:
-                points_in_cluster.append(p_new)
-                found = True
-                break
+        clusters = [] 
+        for p_new in orb_raw:
+            found = False
+            for rep, points_in_cluster in clusters:
+                #print(f"p_new{p_new}, rep: {rep}, distance:{periodic_dist(p_new, rep)}")
+                if periodic_dist(p_new, rep) <= frac_tolerance*2:
+                    points_in_cluster.append(p_new)
+                    found = True
+                    break
 
-        if not found:
-            clusters.append([p_new.copy(), [p_new.copy()]])
+            if not found:
+                clusters.append([p_new.copy(), [p_new.copy()]])
 
-    # for i, cluster in enumerate(clusters):
-    #     rep = cluster[0]
-    #     print(f"Cluster {i+1}: Representative: {np.round(rep, 6)}")
-    # print(f"total clusters: {len(clusters)}")
+        # for i, cluster in enumerate(clusters):
+        #     rep = cluster[0]
+        #     print(f"Cluster {i+1}: Representative: {np.round(rep, 6)}")
+        # print(f"total clusters: {len(clusters)}")
 
-    final_coords = []
-    ndigits = max(0, -int(math.floor(math.log10(frac_tolerance))))
-    for rep, _ in clusters: 
-        coord_tuple = tuple(
-            float(x)
-            for x in np.round(
-                (np.round((rep % 1.0) / frac_tolerance) * frac_tolerance) % 1.0,
-                ndigits,))
+        final_coords = []
+        ndigits = max(0, -int(math.floor(math.log10(frac_tolerance))))
+        for rep, _ in clusters: 
+            coord_tuple = tuple(
+                float(x)
+                for x in np.round(
+                    (np.round((rep % 1.0) / frac_tolerance) * frac_tolerance) % 1.0,
+                    ndigits,))
 
-        if coord_tuple not in final_coords:
-            final_coords.append(coord_tuple)
+            if coord_tuple not in final_coords:
+                final_coords.append(coord_tuple)
                        
-    return tuple(sorted(final_coords))
+        return tuple(sorted(final_coords))
 
 def compute_disorder(entry, disordered_list, total_sites = 0, verbose = False):
     """
@@ -709,7 +1086,7 @@ def compute_disorder(entry, disordered_list, total_sites = 0, verbose = False):
             print(f"the site is occupied with: {dict(merged_occ)}\n"
                     f"site mixing factor: {site_mixing}\n"
                     f"number of sites: {multiplicity}")
-    
+
     if len(rep_merge_occ) > 1:
         kmin = min(rep_merge_occ, key=rep_merge_occ.get)
         kmax = max(rep_merge_occ, key=rep_merge_occ.get)
@@ -747,6 +1124,147 @@ for sg in wyckoff_sets.index:
         letter_map = {idx: ch for idx, ch in enumerate(letters)}
         inner_map[no] = letter_map  
     mapping_by_sg[sg] = inner_map
+
+_KEY_PAT = re.compile(r"^([A-Za-z]+)(\d*)$")
+_SWORD_DIR = os.path.dirname(__file__)
+
+# ---- Hall-only table loader (once) ----
+_HALL_ONLY_JSON = os.path.join(_SWORD_DIR, "hall_letter_maps_by_sg.json")
+with open(_HALL_ONLY_JSON, "r") as f:
+    _HALL_ONLY_RAW = json.load(f)
+
+def _get_hall_maps_for_sg(sg_num):
+    """
+    Return {hall_no(str): perm_ref_to_hall(dict)} for one SG.
+    Supports:
+    1) old format: { "12": { "63": {...}, ... }, ... }
+    2) tagged format: { "by_sg": { "12": { "halls": { "63": {"perm_ref_to_hall": {...}}, ... }}}}
+    """
+    sg_key = str(int(sg_num))
+
+    if "by_sg" in _HALL_ONLY_RAW:
+        block = _HALL_ONLY_RAW["by_sg"].get(sg_key, {})
+        halls = block.get("halls", {})
+        out = {}
+        for h, rec in halls.items():
+            perm = rec.get("perm_ref_to_hall", rec) if isinstance(rec, dict) else rec
+            out[str(h)] = {str(k): str(v) for k, v in perm.items()}
+        return out
+
+    block = _HALL_ONLY_RAW.get(sg_key, {})
+    return {str(h): {str(k): str(v) for k, v in p.items()} for h, p in block.items()}
+
+def _apply_letter_perm_to_sequence_map(sequence_map, letter_perm):
+    out = {}
+    for k, v in sequence_map.items():
+        m = _KEY_PAT.fullmatch(str(k).strip())
+        if not m:
+            raise ValueError(f"Invalid Wyckoff key format: {k!r}")
+        letter, suffix = m.group(1), (m.group(2) or "")
+        out[f"{letter_perm[letter]}{suffix}"] = v
+    return out
+
+def _hall_candidates_and_conventional(sequence_map, sg_num):
+    """
+    Return:
+      hall_candidates: list of dicts (for debug/inspection)
+      seq_map_conv: sequence_map mapped to selected Hall branch
+      conv_branch: selected candidate dict
+    """
+    hall_maps = _get_hall_maps_for_sg(sg_num)
+    if not hall_maps:
+        seq_sorted = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return [], seq_sorted, {"hall_no": None, "wyck": "_".join(seq_sorted.keys()), "elem": "_".join(seq_sorted.values())}
+
+    cands = []
+    for hall_no, perm_ref_to_hall in sorted(hall_maps.items(), key=lambda kv: int(kv[0])):
+        # input assumed in hall_no; map back to reference/conventional with inverse
+        perm_hall_to_ref = {v: k for k, v in perm_ref_to_hall.items()}
+        transformed = _apply_letter_perm_to_sequence_map(sequence_map, perm_hall_to_ref)
+        transformed = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
+
+        cands.append({
+            "hall_no": int(hall_no),
+            "wyck": "_".join(transformed.keys()),
+            "elem": "_".join(transformed.values()),
+            "sequence_map_ref": transformed,
+        })
+
+    # dedup by (wyck, elem)
+    uniq = {}
+    for c in cands:
+        uniq.setdefault((c["wyck"], c["elem"]), c)
+    hall_candidates = list(uniq.values())
+
+    # choose Hall-stage lexicographic minimum, same tie-break style as WP canonicalization
+    conv_branch = min(hall_candidates, key=lambda x: (x["wyck"], x["elem"]))
+    return hall_candidates, conv_branch["sequence_map_ref"], conv_branch
+
+def _enumerate_wp_candidates_legacy(sequence_map, sg_num):
+    """
+    Legacy WP candidates from mapping_by_sg (same rule as old canonical).
+    """
+    wp_mappings = mapping_by_sg.get(sg_num, {})
+    if not wp_mappings:
+        t = dict(sorted(sequence_map.items(), key=lambda kv: (kv[1], kv[0])))
+        return [("_".join(t.keys()), "_".join(t.values()), t)]
+
+    base_no = min(wp_mappings)
+    base_idx_to_letter = wp_mappings[base_no]
+    base_letter_to_idx = {ch: idx for idx, ch in base_idx_to_letter.items()}
+
+    candidates = []
+    for _, idx_to_letter in wp_mappings.items():
+        transformed = {}
+        ok = True
+        for k, v in sequence_map.items():
+            m = _KEY_PAT.fullmatch(str(k).strip())
+            if not m:
+                ok = False
+                break
+            ch, suf = m.group(1), (m.group(2) or "")
+            idx = base_letter_to_idx.get(ch)
+            if idx is None or idx not in idx_to_letter:
+                ok = False
+                break
+            transformed[f"{idx_to_letter[idx]}{suf}"] = v
+        if not ok:
+            continue
+
+        transformed = dict(sorted(transformed.items(), key=lambda kv: (kv[1], kv[0])))
+        candidates.append(("_".join(transformed.keys()), "_".join(transformed.values()), transformed))
+
+    # unique + sorted
+    uniq = {}
+    for w, e, t in candidates:
+        uniq[(w, e)] = t
+    return [(w, e, uniq[(w, e)]) for (w, e) in sorted(uniq.keys())]
+
+def _canonicalize_sequence_map_with_hall(sequence_map, sg_num, return_trace=False):
+    """
+    Hall-stage normalization + legacy WP canonicalization.
+    Shared by CIF/native SWORD path and pyxtal_dict path.
+    """
+    hall_candidates, seq_map_conv, conv_branch = _hall_candidates_and_conventional(sequence_map, sg_num)
+
+    # legacy canonical (3 args)
+    wyckoff_set_std, element_seq, seq_std = get_canonical_wyckoff_sets(
+        seq_map_conv, mapping_by_sg, sg_num
+    )
+
+    if not return_trace:
+        return wyckoff_set_std, element_seq, seq_std
+
+    wp_candidates = _enumerate_wp_candidates_legacy(seq_map_conv, sg_num)
+    return wyckoff_set_std, element_seq, seq_std, {
+        "hall_candidates": hall_candidates,
+        "conventional_branch": conv_branch,
+        "wp_candidates_from_conventional": wp_candidates,
+    }
+
+# backward-compatible alias
+def _canonicalize_pyxtal_sequence_map(sequence_map, sg_num, return_trace=False):
+    return _canonicalize_sequence_map_with_hall(sequence_map, sg_num, return_trace=return_trace)
 
 def get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, space_group_number):
     """
@@ -938,7 +1456,7 @@ def intersect_orb(entry, site_tolerance = 1e-4, occ_tolerance = 1.0):
                 "distance": t[5], 
                 "threshold": t[6],
             })
-        
+    
         return positional_disorder, intersect_dicts
 
     except Exception as e:
@@ -1153,7 +1671,7 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
                     parts.append(f"{cnts[el]}{el}" if cnts[el] > 1 else el)
                 orbit_str = "+".join(parts)
             elem_counter[orbit_str] += 1
-        
+    
         elem_parts = [] #elem_part is the elemental correspondings of each wyckoff letter group
         for orbit_str, cnt in elem_counter.items():
             if cnt == 1:
@@ -1197,8 +1715,8 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
     #=========================section 4: get canonical wyckoff sequence=======================  
     #wyckoff_set_std = get_canonical_wyckoff_sets(sequence_map, mapping_by_sg, entry.spg_num)
     #disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"      
-    wyckoff_set_std, element_seq, sequence_map_std = get_canonical_wyckoff_sets(
-    sequence_map, mapping_by_sg, entry.spg_num
+    wyckoff_set_std, element_seq, sequence_map_std = _canonicalize_sequence_map_with_hall(
+        sequence_map, entry.spg_num
     )
     disorder_label = f"{wyckoff_set_std}_{space_group_number}_{element_seq}"
 
@@ -1244,6 +1762,7 @@ def disorder_label(entry, *, site_tolerance: float = 0.0001, vac_tolerance: floa
         "intersect_orb_error": intersect_orb_error
     } 
 
+
 def get_sword_label(
     data: Union[str, Structure],  # CIF text / CIF path / pymatgen Structure
     *,
@@ -1251,11 +1770,13 @@ def get_sword_label(
     angle_tolerance: float = 5.0,
     occupancy_tolerance: float = 1.0,
     site_tolerance: float = 1e-4,
-    occ_tolerance: float = 1.0,
+    occ_tolerance: float | None = None,
     vac_tolerance: float = 1e-2,
     frac_tolerance: float = 1e-4,
     conventional_struct: bool = True,
     refine_struct: bool = False,
+    symprec_scan: bool = False,
+    decision_max_symprec=_MAX_SCAN_SYMPREC,
 ) -> str:
     if isinstance(data, Structure):
         cif_txt = data.to(fmt="cif")
@@ -1275,7 +1796,11 @@ def get_sword_label(
         occupancy_tolerance=occupancy_tolerance,
         conventional_struct=conventional_struct,
         refine_struct=refine_struct,
+        symprec_scan=symprec_scan,
+        decision_max_symprec=decision_max_symprec,
     )
+    if occ_tolerance is None:
+        occ_tolerance = occupancy_tolerance
 
     return disorder_label(
         entry,
@@ -1293,11 +1818,13 @@ def get_sword_info(
     angle_tolerance: float = 5.0,
     occupancy_tolerance: float = 1.0,
     site_tolerance: float = 1e-4,
-    occ_tolerance: float = 1.0,
+    occ_tolerance: float | None = None,
     vac_tolerance: float = 1e-2,
     frac_tolerance: float = 1e-4,
     conventional_struct: bool = True,
     refine_struct: bool = False,
+    symprec_scan: bool = False,
+    decision_max_symprec=_MAX_SCAN_SYMPREC,
 ) -> str:
     if isinstance(data, Structure):
         cif_txt = data.to(fmt="cif")
@@ -1318,7 +1845,11 @@ def get_sword_info(
         occupancy_tolerance=occupancy_tolerance,
         conventional_struct=conventional_struct,
         refine_struct=refine_struct,
+        symprec_scan=symprec_scan,
+        decision_max_symprec=decision_max_symprec,
     )
+    if occ_tolerance is None:
+        occ_tolerance = occupancy_tolerance
 
     return entry, disorder_label(
         entry,
@@ -1329,7 +1860,55 @@ def get_sword_info(
         verbose=False,
     )
 
-def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+# def find_parent_ICSD_legacy(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
+#     child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
+#     elements = sorted([el.symbol for el in child.composition.elements])
+#     mask_sets = [
+#         comb
+#         for k in range(2, len(elements) + 1)
+#         for comb in combinations(elements, k)
+#     ]
+
+#     out = []
+#     for mask in mask_sets:
+#         masked = child.copy()
+#         masked.replace_species({el: DummySpecie("X", 0) for el in mask})
+#         label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
+
+#         mix = "+".join(sorted(mask))
+#         label = label.replace("X", f"{{{mix}}}")
+
+#         rows = icsd_df[icsd_df["disorder_label"] == label]
+#         out.append({
+#             "child_label": child_label,
+#             "parent_label": label,
+#             "matched_labels": rows["disorder_label"].tolist(),
+#             "id": rows["CollectionCode"].tolist(),
+#         })
+#     return out
+
+def _replace_dummy_in_sequence_map(sequence_map, mix):
+    out = {}
+    for wyck, elem_part in sequence_map.items():
+        if elem_part == "X":
+            out[wyck] = f"{{{mix}}}"
+            continue
+
+        if elem_part.startswith("{") and elem_part.endswith("}"):
+            items = [x.strip() for x in elem_part[1:-1].split(",")]
+            items = [mix if x == "X" else x for x in items]
+            items = sorted(items)
+            if len(items) == 1 and "+" not in items[0] and not items[0][0].isdigit():
+                out[wyck] = items[0]
+            else:
+                out[wyck] = "{" + ",".join(items) + "}"
+            continue
+
+        out[wyck] = mix if elem_part == "X" else elem_part
+
+    return out
+
+def find_parent_ICSD(child, icsd_df, symprec_child=1e-2, symprec_search=1.0): #symprec_search should be high enough to recover the higher symmetry
     child_label = get_sword_label(child, symprec=symprec_child, conventional_struct=True)
     elements = sorted([el.symbol for el in child.composition.elements])
     mask_sets = [
@@ -1342,10 +1921,14 @@ def find_parent_ICSD(child, icsd_df, symprec_child=1e-1, symprec_search=1.0): #s
     for mask in mask_sets:
         masked = child.copy()
         masked.replace_species({el: DummySpecie("X", 0) for el in mask})
-        label = get_sword_label(masked, symprec=symprec_search, conventional_struct=True)
+        entry, info = get_sword_info(masked, symprec=symprec_search, conventional_struct=True)
 
         mix = "+".join(sorted(mask))
-        label = label.replace("X", f"{{{mix}}}")
+        sequence_map = _replace_dummy_in_sequence_map(info["sequence_map"], mix)
+        wyckoff_set_std, element_seq, _ = _canonicalize_sequence_map_with_hall(
+            sequence_map, entry.spg_num
+        )
+        label = f"{wyckoff_set_std}_{entry.spg_num}_{element_seq}"
 
         rows = icsd_df[icsd_df["disorder_label"] == label]
         out.append({
@@ -1403,3 +1986,66 @@ def get_sword_info_for_ICSD(
         frac_tolerance=frac_tolerance,
         verbose=False,
     )
+
+def get_sword_label_from_pyxtal(pyxtal_dict):
+    """
+    Generates a SWORD label from a PyXtal dictionary representation.
+
+    Args:
+        pyxtal_dict (dict): A dictionary containing 'group' (int), 
+                            'sites' (list of lists of strings), 
+                            and 'species' (list of strings).
+
+    Returns:
+        str: The standardized SWORD label.
+    """
+    sg_num = int(pyxtal_dict['group'])
+    species_list = pyxtal_dict['species']
+    sites_list = pyxtal_dict['sites']
+
+    # 1. Group elements by Wyckoff letter
+    # Flatten the PyXtal structure: Wyckoff Letter -> List of elements on that site
+    wyck_groups = defaultdict(list)
+
+    for species, site_sublist in zip(species_list, sites_list):
+        for site_str in site_sublist:
+            # Extract just the letter (e.g., '4h' -> 'h', '18e' -> 'e')
+            letter = "".join(filter(str.isalpha, site_str))
+            wyck_groups[letter].append(species)
+        
+    # 2. Construct the sequence map (Key: WyckoffPart, Value: ElementPart)
+    sequence_map = {}
+
+    for letter, elems in wyck_groups.items():
+        count = len(elems) # Number of distinct orbits (sites) for this letter
+    
+        # Build Wyckoff Part (e.g., 'a' or 'a12')
+        wyck_key = f"{letter}{count}" if count > 1 else letter
+    
+        # Build Element Part
+        # Count element occurrences: e.g. {'Sn': 5, 'Te': 6, 'Ag': 1}
+        cnts = Counter(elems)
+        parts = []
+        for el, n in cnts.items():
+            if n > 1:
+                parts.append(f"{n}{el}")
+            else:
+                parts.append(el)
+    
+        # Sort parts as strings (standard lexicographical sort matches SWORD format: 10 < 2, 5 < 6 < A)
+        parts.sort()
+    
+        # Determine formatting based on orbit count
+        # If multiple sites exist for this letter, enclose in brackets {}
+        if count == 1:
+            elem_val = parts[0]
+        else:
+            elem_val = "{" + ",".join(parts) + "}"
+        
+        sequence_map[wyck_key] = elem_val
+
+    # PyXtal-generated sequences have some canonicalization issues; bypassing for now (need to investigate further)
+    wyckoff_set_std, element_seq, _ = _canonicalize_sequence_map_with_hall(
+        sequence_map, sg_num, return_trace=False
+    )
+    return f"{wyckoff_set_std}_{sg_num}_{element_seq}"
