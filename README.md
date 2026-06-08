@@ -1,205 +1,304 @@
-# SWORD——Symmetry and Wyckoff-sequence of Ordered and Disordered crystals
+# SWORDlib
 
-# How to Use SWORD:
-`from utils_SWORD import get_sword_label`
-`from utils_SWORD import get_sword_info`
-1. return SWORD_label: 
-- `label = get_sword_label(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
-#or
-- `label = get_sword_label(cif_text, symprec={your_preferred_symprec})`
-#or
-- `label = get_sword_label("path/to/file.cif", symprec={your_preferred_symprec})`
+SWORDlib provides tools for generating SWORD labels from ordered and disordered
+crystal structures. A SWORD label combines symmetry, standardized Wyckoff
+sequence information, and site-occupancy disorder information into a compact
+representation that can be used for structure grouping, disorder curation, and
+order-disorder family matching.
 
-3. return all information
-- `entry, dict = get_sword_info(structure, symprec={your_preferred_symprec})`  #pymatgen.core.Structure
-#or
-- `entry, dict = get_sword_info(cif_text, symprec={your_preferred_symprec})`
-#or
-- `entry, dict = get_sword_info("path/to/file.cif", symprec={your_preferred_symprec})`
-- `display(entry.df)`
+This package is the installable Python package form of SWORD:
 
-## ICSD-specific interfaces (for ICSD cleaning)
-**Import**
-`from utils_SWORD import get_sword_label_for_ICSD`  
-`from utils_SWORD import get_sword_info_for_ICSD`
+- [arXiv:2604.17994](https://arxiv.org/abs/2604.17994), SWORD: Symmetry and Wyckoff-sequence of Ordered and Disordered crystals
+- [arXiv:2604.21386](https://arxiv.org/abs/2604.21386), Navigating Order-(Dis)Order Family Trees via Group-Subgroup Transitions
 
-### 1) Return SWORD label only
-`label = get_sword_label_for_ICSD(collection_code, ICSD_df=ICSD_df)`
+## Installation
 
-### 2) Return full information
-`entry, info = get_sword_info_for_ICSD(collection_code, ICSD_df=ICSD_df)`  
-`display(entry.df)`
-
-> Note: `collection_code` is the ICSD CollectionCode; `ICSD_df` is a DataFrame containing `CollectionCode` and `cif` columns.
-
-## find_parent_ICSD
-**Purpose**  
-Finds the parent disordered ICSD entry from a given random ordered child structure and returns the parent candidate(s) SWORD label based on matching rules.
-
-**Input**  
-- `child`: ordered child structure (**same accepted types as `get_sword_label`** )  
-- `ICSD_df`: ICSD database/DataFrame **with SWORD labels** (must include `CollectionCode`, and `disorder_label` columns)  
-- other optional parameters, symprec_child: symprec of labelling ordered structures, symprec_search: symprec of searching & recovering parent label)
-
-**Example**
-`parent_code = find_parent_ICSD(child, ICSD_df=ICSD_df)`
-
-
-# Introduction of Main functions:
-
-**Classifying, labelling and filtering ICSD, identify high-quality and trustworthy ICSD entries**
-
-<div id="note" style="border:1px solid #d0d7de; padding:16px; background:#fcffd2; border-radius:6px;">
-<strong style="font-size:1.05em;">Known issues of ICSD</strong>
-
-<p style="margin-top:0.5em;">
-(1). Non-element symbols (e.g., {'M', 'D', 'T', 'X', 'L'});
-
-(2). Occupancy larger than 1.0;
-
-(3). Coordinates error (e.g. 0.2840.29018(16) - See ICSD CollectionCode 70589);
-
-(4). Wyckoff letter error (e.g., ‘*’)
-</p>
-
-See details in [ICSD Pre-screening Report](./ICSD_prescreen_report.txt)
-</div>
-
-# 1. StructureEntry instance:
-
-`StructureEntry`:
-
-The CIF wrapper: `StructureEntry` use `Pymatgen CifParser` to read original CIF file and retrieve key crystallographic information via `entry.attribute` notation
-The instance can be constructed by:
-
-**From ICSD CollectionCode:**
-
-`StructureEntry.from_CollectionCode(CollectionCode, ICSD: pd.Dtaframe = None)`
-A valid `CollectionCode` is required, and the target entry must exist within the `ICSD` DataFrame you are using:
-
-`example = StructureEntry.from_collection_code(137626, ICSD)`
-
-**From CIF text:**
-
-`example = StructureEntry.from_cif(cif_str)`
-
-```
-        **Frequently used entry.attribute:**
-        self.cif_str                      #original CIF text
-        self.CollectionCode               #CollectionCode
-        self.spg_num                      #space group number
-        self.lattic                       #lattice parameter (a,b,c)   
-        self.points                       #list of all (x,y,z) sites' wyckoff positions in CIF
-        self.xs = xs                      #list of all sites' x-axis coordinates in CIF
-        self.ys = ys                      #list of all sites' y-axis coordinates in CIF
-        self.zs = zs                      #list of all sites' z-axis coordinates in CIF
-        self.labels                       #list of all sites' labels
-        self.type_symbols                 #list of all sites' type_symbols
-        self.occ                          #list of all sites' occupancies
-        self.mults                        #list of all sites' multiplicity 
-        self.wyckoffs                     #list of all sites' wyckoff letters
-        self.sym_ops                      #list of all symmetry operations recorder in CIF
-    
+```bash
+pip install SWORDlib
 ```
 
-# 2. Pre-screening of ICSD:
+## Core SWORD Labelling
 
-In ICSD_prescreen.py or ICSD_prescree_filter.ipynb file :
+```python
+import sword
+```
 
-Run the file (it will take about 7 mins):
+Use `get_sword_label` when you only need the compact label.
 
-**It will pre-screen ICSD based on following 3 functions:**
+```python
+from sword import get_sword_label
 
-- `contains_H(entry)`:
+label = get_sword_label("path/to/structure.cif")
+print(label)
+```
 
-  Remove Entries contain hydrogen and its isotopes D and T labels in CIF (note: The entry will not be removed if the atomic `labels` in the CIF do not include hydrogen, even if the element is claimed in either the ICSD `StructureFormula` or the CIF's `_chemical_formula_structural` tag.)
+The input can be a CIF string, a CIF path, or a `pymatgen.core.Structure`.
 
-- `get_non_elements(entry, excluded_elements=None)`:
+Use `get_sword_info` when you also need the parsed entry and diagnostic
+metadata.
 
-  Identify and remove unwanted elements (non-element symbols: 'M', 'X', 'L', or **any undesired element that you want to exclude**)
+```python
+from sword import get_sword_info
 
-  In ICSD_prescreen.py file, we exclude the following noble gases and radioactive elements:
+entry, info = get_sword_info(
+    cif_text,
+    parser_occ_tolerance=1.05,
+    occ_tolerance=1.0,
+    site_tolerance=1e-4,
+    vac_tolerance=1e-2,
+    frac_tolerance=1e-4,
+)
 
-  ['He', 'Ne', 'Ar', 'Kr', 'Es'].
+print(info["disorder_label"])
+print(info["is_disorder"])
+print(info["degree_of_mixing"])
+```
 
-- `check_cif_format(entry, occ_tolerance: float = 1.0)` :
+The main labelling parameters are:
 
-  Identify and remove entries contain any non-standard format, including:
+- `symprec`: symmetry tolerance used during structure standardization. See
+  pymatgen/spglib documentation for detailed behavior.
+- `angle_tolerance`: angular tolerance, in degrees, used during symmetry
+  standardization. See pymatgen documentation for details.
+- `site_tolerance`: distance tolerance for deciding whether two sites should be
+  treated as the same disorder site.
+- `occ_tolerance`: SWORD's post-parsing occupancy tolerance for each grouped
+  orbit/site. Occupancy sums above this value are reported as occupancy-orbit
+  errors.
+- `vac_tolerance`: minimum missing occupancy needed to record a `VAC` component
+  in the disorder label. For example, an occupancy sum of 0.995 does not produce
+  `VAC` when `vac_tolerance=1e-2`.
+- `frac_tolerance`: rounding tolerance used in fractional-coordinate and
+  disorder-label operations. Values like `1e-4` or `1e-5` are recommended.
+- `conventional_struct`: whether to use pymatgen's conventionalized structure
+  during the SWORD parsing path.
+- `refine_struct`: whether to let pymatgen refine the structure before
+  labelling. This can change labels and should be used deliberately.
 
-  non-standard coordinate: 0.485.078
-  non-standard wyckoff letters, such as ‘*’.
-  occupancy: occupancy value > occ_tolerance (default as 1.0), or occupancy < 0. (note: can only identify the occupancy of individual site; it is unable to sum the occupancy values for disordered sites.)
+Two occupancy-related parameters are intentionally separate.
+`parser_occ_tolerance`: occupancy tolerance passed to pymatgen's CIF parser. Acts 
+before SWORD, while the CIF is being read.
+`occ_tolerance`: SWORD's post-parsing occupancy tolerance for each grouped
+  orbit/site. Occupancy sums above this value are reported as occupancy-orbit
+  errors.
+For ICSD curation, a common choice is
+`parser_occ_tolerance=1.05` and `occ_tolerance=1.0`.
 
+## ICSD Curation Pipeline
 
-# 3. Labelling StructureEntry:
+`run_icsd_dedup_pipeline` provides a high-level workflow for ICSD
+dataframes containing a CIF text column and a stable entry ID column.
 
-After pre-screening process, the ICSD entries can be labelled now:
+```python
+import pandas as pd
+from sword import run_icsd_dedup_pipeline
 
-`disorder_label(entry, site_tolerance = 1e-4, vac_tolerance = 1e-2, occ_tolerance = 1.0, frac_tolerance = 1e-4,)` :
+df = pd.read_pickle("ICSD2025_summary.pkl")
 
-`site_tolerance`:
+result = run_icsd_dedup_pipeline(
+    df,
+    cif_col="cif",
+    id_col="CollectionCode",
+    mode="from_collection_code",
+    prescreen_params={
+        "parser_occ_tolerance": 1.05,
+        "excluded_elements": ("He", "Ne", "Ar", "Kr", "Es"),
+        "exclude_hydrogen": True,
+    },
+    sword_params={
+        "parser_occ_tolerance": 1.05,
+        "occ_tolerance": 1.0,
+        "site_tolerance": 1e-4,
+        "vac_tolerance": 1e-2,
+        "frac_tolerance": 1e-4,
+    },
+    family_info=False,
+    dom_distance_tol=0.03,
+    output_dir="sword_icsd_results",
+)
+```
 
-Determine if two sites are at the same position, in which case they will be combined to a single disordered site, defalut as 1e-4. For example: If the distance between two sites ≤ site_tolerance, the sites are regarded as in the same position.
+The result object contains:
 
-`vac_tolerance:`
+- `result.prescreen_rejected`: entries removed before labelling, with reject reasons.
+- `result.label_results`: the labelled dataframe with SWORD labels and compact diagnostics.
+- `result.anomalies`: detailed warning/error tables.
+- `result.label_groups`: grouped SWORD-label summary table.
+- `result.refined`: curated and deduplicated entries.
 
-Determine if vacancy component exist for each single/multi-occupancy site, in which case the ‘VAC’ will present in the final disorder label, defalut as 1e-2. For example:
+`result.prescreen_rejected["reject_reason"]` records why a row did not enter
+the labelling stage. Possible reasons include:
 
-vacancy component = 1.0 - (sum of occupancy) ≥ vac_tolerance, the site are regarded as containing vacancy. Otherwise, the vacancy component will be ignored (e.g occ_sum = 1.0-0.995 = 0.005 ≤ 0.01, the vacancy component will be ignored and not recorded in disorder label).
+- `parse_error`: the CIF block could not be read by pymatgen.
+- `hydrogen`: the CIF site labels contain H, D, or T when `exclude_hydrogen=True`.
+- `non_element`: the CIF site labels contain unsupported/non-element symbols or
+  elements listed in `excluded_elements`.
+- `coordinate_error`: fractional coordinates are missing or malformed.
+- `wyckoff_error`: Wyckoff symbols are missing or malformed.
+- `multiplicity_error`: site multiplicities are missing or malformed.
+- `occupancy_error`: a raw site occupancy is missing, non-positive, or larger
+  than `parser_occ_tolerance`.
 
-`occ_tolerance`:
+`result.label_results["processing_issue"]` records semicolon-separated warning
+or error flags generated during labelling. `None` means no issue was recorded.
+The detailed rows are stored in `result.anomalies` and, when `output_dir` is
+provided, saved under `anomalies/`:
 
-If sum of occupancy of a site is between 1 and occupancy_tolerance, it will be scaled down to 1. If total occupancy > occ_tolerance, the CollectionCode and sites will be recorded in `occ_err_sites`.  
-**(notes: Entries that contain occupancy > occ_tolerance will never be passed into `is_positional_disorder` and `intersect_orb` for further processing. To avoid pymatgen complaint ERROR when processing positional disorder, it is strongly advised that a consistent `occ_tolerance` be used for both pre-screening and labeling.)**
+- `label_errors`: hard failures during structure parsing or SWORD label
+  generation. The compact flag: `structure_parse_failed` or
+  `label_generation_failed`.
+- `wyck_float_warn`: Wyckoff coordinate expansion gives more positions than the
+  declared multiplicity, usually indicating floating-point or refinement issues
+  in the CIF. The compact flag: `wyckoff_float_warning`.
+- `occ_err_sites`: grouped orbit/site occupancy exceeds `occ_tolerance`. The
+  compact flag: `occupancy_orbit_error`.
+- `equivalent_but_distinct_sites`: sites are symmetry-equivalent but have
+  distinct representative coordinates, often because the CIF coordinates are not
+  exactly on the expected special position. The compact flag:
+  `equivalent_sites_warning`.
+- `same_valence_sites`: same-element/same-valence co-occupancy was detected and
+  merged for labelling. The compact flag is `same_valence_site_warning`.
+- `intersect_orb_errors`: the positional-disorder check failed. The compact flag
+  is `positional_check_failed`. Positional disorder itself is recorded in
+  `is_positional_disorder`.
 
-`frac_tolerance`:
+By default, the refined table removes hard parse/label errors, positional
+disorder, occupancy-orbit errors, Wyckoff floating-point warnings, and
+equivalent-site warnings. Same-valence warnings are recorded but not removed by
+default.
 
-Determine the rounding precision for all algebraic operation involved in disorder_label, default as 1e-4. (note: It is recommended the rounding precision **be kept at 1e-4** or higher(1e-5), and use a tolerance in the 1e-x format, **avoiding coefficients other than 1** (e.g., avoid using 2e-4)
+Set `family_info=True` to append a `SWORD_family_dic` column to
+`result.label_results`. This is slower and usually not needed for a first ICSD
+curation pass.
 
-# 4. Post-processing:
+```python
+result = run_icsd_dedup_pipeline(
+    df,
+    family_info=True,
+    family_params={
+        "parser_occ_tolerance": 10.0,
+        "fill_vacancy": False,
+    },
+)
+```
 
-After running `ICSD_filter.py` , following documents will be returned:
+`family_params` must be a dictionary accepted by `SWORDFamilyMatcher`.
+Use `fill_vacancy=False` for most large reference-table precomputations such as
+ICSD/COD. Set `fill_vacancy=True` mainly for query-side ordered structure datasets/databases
+that may contain vacancy ordering or missing-site defects, e.g. Materials Project, LeMat-Bulk, where filling
+possible vacancies can help expose candidate disorder parents.
 
-- A Processed ICSD dataframe, including the new columns:
-  - Type of disorder (bool value): `is_disorder`, `is_sub_disorder` (substitutional), `is_vac_disorder` (vacancy), `is_positional_disorder`.
-  - disorderd sites list:
+## Generic Database Labelling
 
-    `disordered_label_list`(optional, not returned): e.g.  [[Co1, Mn1], [Ni1, Mn2]], it means the entry contains two disordered sites (or disordered Wyckoff positions). The first site is co-occupied with Co1 and Mn1, and the second site is co-occupied with Ni1 and Mn2.
+For non-ICSD databases, use `label_dataframe`. The dataframe only needs a CIF
+text column and a stable ID column.
 
-    `disordered_valence_list` : the only difference with `disordered_label_list` is that sites co-occupied with **same element but in different oxidation number**, will be recorded as [Fe2+, Fe3+]. Sites with different elements remain as [Ni1, Mn2]].
+```python
+from sword import label_dataframe
 
-  - `disorder_label`:
+labelled, anomalies = label_dataframe(
+    df,
+    cif_col="cif",
+    id_col="material_id",
+    sword_params={
+        "parser_occ_tolerance": 1.05,
+        "occ_tolerance": 1.0,
+        "site_tolerance": 1e-4,
+        "vac_tolerance": 1e-2,
+        "frac_tolerance": 1e-4,
+    },
+    family_info=False,
+)
 
-    Assembles a disorder_label as `{wyckoff_set_std}_{space_group_number}*_*{element_seq}`
-    (e.g., 'j_i2_h_a_225_A_2B_{A+B}_C') for unique disorder structural identification.
+print(labelled[["material_id", "SWORD_label", "is_disorder"]])
+```
 
-    for more details, reference [3.2.1 Deduplicate ICSD](https://www.notion.so/3-2-1-Deduplicate-ICSD-22c368b0466180a5aa78ffa754f2f1b0?pvs=21)
+This interface is appropriate for MP, LeMat, or user-built
+structure tables when each row can provide a CIF string.
 
-  - `degree_of_mixing`:
-    the **weighted average** of the **Shannon entropy** for all **co-occupied sites** (substitutional & vacancy-disordered sites) in the structure, with a sign delta:
+Set `family_info=True` if you also want family dictionaries:
 
-                                                           Δ = (XA - XZ) / |XA - XZ|
-    The site with the highest contribution to total mixing value is chosen as the representative.
-    Δ is then derived from the two most extreme components (minimum XA and maximum XZ occupancies) of this representative site.
+```python
+labelled, anomalies = label_dataframe(
+    df,
+    cif_col="cif",
+    id_col="material_id",
+    family_info=True,
+    family_params={
+        "symprec_child": 1e-2,
+        "symprec_search": 1.0,
+        "parser_occ_tolerance": 10.0,
+        "fill_vacancy": False,   #turn on to True if this dataset may contain vacancy ordering and you want to find disordered parent structure of this vacancy-type ordered structure
+    },
+)
 
-    for more details reference: [3.2.1 Deduplicate ICSD](https://www.notion.so/3-2-1-Deduplicate-ICSD-22c368b0466180a5aa78ffa754f2f1b0?pvs=21)
+print(labelled[["material_id", "SWORD_label", "SWORD_family_dic"]])
+```
 
-  - `fraction_of_disordered_sites`: number of co-occupied (S and V-type) sites / number of all sites
-  - `wyckoff_set_std`: wyckoff sets, standardized Wyckoff set by converting the original wyckoff sets (under different space group setting) into a canonical format.
-- Outliers documents:
-  - `wyck_float_warn.csv`: triggered when number of generated coordinates > multiplicity claim on this site. This warns of inaccuracy of wyckoff position that has potential sever **floating-point error**. Conversely, if the number of generated coordinates < multiplicity, it is typically not a concern, as this usually indicates the coordinates lies on a special position (toward higher symmetry).
-  - `occ_err_sites.csv`: sum of occupancy in a site that > `occ_tolerance`
-  - `equivalent_but_distinct_sites.csv`: sites that are equivalent (the wyckoff positions that generate same sets of positions), but the coordinate of wyckoff positions are different.
-  - `same_valence_sites.csv`: sites that are co-occupied with same elements with same oxidation number (this type of disorder is invalid and is automatically merged, the degree of mixing will also not be calculated).
-  - `intersect_orb.csv`: Recording positional disordered sites. Two sites are intersect if distance between sites < threshold, refer to: [Exploration of positional disorder](https://www.notion.so/Exploration-of-positional-disorder-277368b04661808f9f59e25207e3a437?pvs=21)
-  - `intersect_orb_error.json`: triggered when positional disorder related codes return error. Possible reasons: 1. contain elements that cannot define radius (noble gas, radioactive, etc); 2. Pymatgen Error(normally the occupancy>occ_tolerance is detect). 3. Pymatgen error: non-standard records in CIF. This **will remain empty** if consistent occ_tolerance are used in prescreeing and labelling.
-  - `orb_none_entry.json`: The code failed to process wyckoff position based on symmetry operation recorded in CIF. **Normally, this will remain empty**. However, this might be useful for the user-generated CIF (e.g from generative model instead of ICSD).
-  - `main_err.json`: Normally empty. The `disorder_label` fail to process `StructureEntry`. Contact me.
+## Order-Disorder Family Matching
 
+`SWORDFamilyMatcher` can generate a SWORD family dictionary for an ordered query
+structure and search for possible disordered parent labels.
 
-After running ICSD_filter.py, to generate a more clean ICSD database, the CollectionCode from following documents can be removed from ICSD if you trust the results:
+```python
+from sword import SWORDFamilyMatcher
 
-- `wyck_float_warn.csv` : suggests a poor XRD refinement quality. The refined coordinates in CIF being shifted from their standard Wyckoff values.
-- `occ_err_sites.csv`
-- `equivalent_but_distinct_sites.csv` : usually contains floating-point error/
-- `intersect_orb_error.json`
+matcher = SWORDFamilyMatcher(
+    symprec_child=1e-2,
+    symprec_search=1.0,
+    parser_occ_tolerance=10.0,
+    fill_vacancy=False,
+)
+
+family = matcher.get_sword_dic("path/to/ordered_query.cif")
+
+print(family["child_label"])
+print(family["parent_labels"])
+```
+
+For repeated searches, precompute a family dictionary column for the reference
+table. This can be slow for large datasets, so it is usually done once and saved.
+For large reference tables, keep `fill_vacancy=False` unless you explicitly want
+the reference-side vacancy-filling expansion.
+
+```python
+from sword import SWORDFamilyMatcher
+
+matcher = SWORDFamilyMatcher(fill_vacancy=False)
+
+reference_df["SWORD_family_dic"] = reference_df["cif"].apply(
+    matcher.get_sword_dic
+)
+```
+
+Then compare a query against the reference table:
+
+```python
+matches = matcher.fit_many(query_structure, reference_df)
+
+print(matches["matched_disordered_ids"])
+print(matches["matched_disordered_labels"])
+```
+
+By default, `fit_many` reads `reference_df["SWORD_family_dic"]`. If the query is
+a dataframe row with `SWORD_family_dic` and `SWORD_family_dic_vac`, both query
+columns are used and `matches["matched_source_by_id"]` records which query
+column produced each match.
+
+`fill_vacancy=True` can be useful when ordered structures may represent vacancy
+ordering variants. In practice, this is most useful for query structures that
+are ordered but may be vacancy-ordered or vacancy-deficient variants. For large
+ICSD-style reference precomputation, `fill_vacancy=False` is usually a better
+default because it is faster and avoids generating extra vacancy-filled
+candidates for every entry.
+
+## Notes
+
+SWORD labels are intended for symmetry- and Wyckoff-aware grouping of materials
+structures. They are especially useful for comparing ordered and disordered
+entries under a common structural representation, but they do not replace
+manual crystallographic judgment for ambiguous or low-quality CIF records.
+
+## Citation
+
+If you use SWORDlib, please cite the SWORD papers listed above.

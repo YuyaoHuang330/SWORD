@@ -1,0 +1,43 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage outputs
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build and packaging outputs
+build/
+dist/
+*.egg-info/
+*.dist-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Notebook and editor temporary files
+.ipynb_checkpoints/
+*.swp
+*.swo
+
+# Local config/secrets
+.env
+
+# Local/private regression data or generated results
+regression_private/
+private_regression/
+results/
+*.pkl
+*.parquet
+tests/results*/
+tests/*_output/
+tests/*.pkl
+tests/*.csv
+
+# Cluster/job outputs and logs
+*.o[0-9]*
+*.e[0-9]*
+*.log

@@ -1,44 +1,69 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "swordlib"
-version = "0.1.dev1"
-description = "SWORDlib is a Python library for SWORD - Symmetry and Wyckoff-sequence of Ordered and Disordered crystals."
-authors = [
-    {name = "Yuyao Huang", email = "YUYAO003@e.ntu.edu.sg"},
-    {name = "Wei Nong", email = "nw2y47@outlook.com"},
-    {name = "Shuya Yamazaki", email = "shuya003@e.ntu.edu.sg"},
-    {name = "Martin Hoffmann Petersen", email = "martin.petersen@ntu.edu.sg"},
-    {name = "Jianghai Wang", email = "jianghai001@e.ntu.edu.sg"},
-    {name = "Ruiming Zhu", email = "raymond_zhurm@outlook.com"},
-    {name = "Kedar Hippalgaonkar", email = "kedar@ntu.edu.sg"},
-]
-maintainers = [
-    {name = "Yuyao Huang", email = "YUYAO003@e.ntu.edu.sg"},
-]
+name = "SWORDlib"
+description = "SWORDlib is a Python library based on SWORD - Symmetry and Wyckoff-sequence of Ordered and Disordered crystals."
 readme = "README.md"
-license = {file = "LICENSE"}
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Operating System :: OS Independent",
-    "License :: OSI Approved :: MIT License",
-    ]
-
-requires-python = ">=3.9"
-dependencies = [
-    "pymatgen",
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dynamic = ["version"]
+authors = [
+  { name = "Yuyao Huang", email = "YUYAO003@e.ntu.edu.sg" },
+  { name = "Wei Nong" },
+  { name = "Shuya Yamazaki" },
+  { name = "Martin Hoffmann Petersen" },
+  { name = "Jianghai Wang" },
+  { name = "Ruiming Zhu" },
+  { name = "Kedar Hippalgaonkar" }
 ]
 
-[tool.setuptools]
-packages = [
-    "swordlib",
-    "swordlib.data",
+maintainers = [
+  { name = "Yuyao Huang", email = "YUYAO003@e.ntu.edu.sg" }
+]
+
+keywords = [
+  "materials-science",
+  "crystallography",
+  "wyckoff",
+  "disorder",
+  "deduplication",
+  "pymatgen"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics"
+]
+dependencies = [
+  "monty",
+  "numpy",
+  "pandas",
+  "pymatgen",
+  "scipy"
 ]
 
 [project.urls]
 Homepage = "https://github.com/YuyaoHuang330/SWORD"
+Repository = "https://github.com/YuyaoHuang330/SWORD"
 Issues = "https://github.com/YuyaoHuang330/SWORD/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sword.__version__" }
+
+[tool.setuptools.package-data]
+sword = [
+  "data/*.csv",
+  "data/*.json"
+]
