@@ -8,9 +8,6 @@ order-disorder family matching.
 
 This package is the installable Python package form of SWORD:
 
-- [arXiv:2604.17994](https://arxiv.org/abs/2604.17994), SWORD: Symmetry and Wyckoff-sequence of Ordered and Disordered crystals
-- [arXiv:2604.21386](https://arxiv.org/abs/2604.21386), Navigating Order-(Dis)Order Family Trees via Group-Subgroup Transitions
-
 ## Installation
 
 ```bash
@@ -301,4 +298,28 @@ manual crystallographic judgment for ambiguous or low-quality CIF records.
 
 ## Citation
 
-If you use SWORDlib, please cite the SWORD papers listed above.
+If you use SWORDlib, please cite our papers:
+
+```bibtex
+@article{huang2026sword,
+  title   = {SWORD: Symmetry and Wyckoff-sequence of Ordered and Disordered crystals},
+  author  = {Huang, Yuyao and Nong, Wei and Yamazaki, Shuya and Petersen, Martin Hoffmann and Wang, Jianghai and Zhu, Ruiming and Hippalgaonkar, Kedar},
+  journal = {arXiv preprint arXiv:2604.17994},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2604.17994},
+  doi     = {10.48550/arXiv.2604.17994}
+}
+```
+
+For family-matching functions, please cite:
+
+```bibtex
+@article{yamazaki2026orderdisorder,
+  title   = {Navigating Order-(Dis)Order Family Trees via Group-Subgroup Transitions},
+  author  = {Yamazaki, Shuya and Huang, Yuyao and Petersen, Martin Hoffmann and Nong, Wei and Hippalgaonkar, Kedar},
+  journal = {arXiv preprint arXiv:2604.21386},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2604.21386},
+  doi     = {10.48550/arXiv.2604.21386}
+}
+```
